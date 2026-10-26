@@ -1,0 +1,51 @@
+{
+  "$schema": "ice://schema/engine.v1.json",
+  "meta": { "name": "4-cyl two-stroke, 24v V6 example pair", "engine_type": "piston2t", "layout_hint": "I4-2t" },
+
+  "fuel": { "type": "gasoline", "molecular_afr": 14.7, "energy_density_j_per_kg": 44e6,
+            "oil_ratio": { "premix": 50 } },
+
+  "crankshafts": [{ "id": "c0", "throw_m": 0.032, "inertia_kgm2": 0.07, "friction_nm": 5,
+                    "journals": [ { "angle_deg": 0 }, { "angle_deg": 180 }, { "angle_deg": 180 }, { "angle_deg": 0 } ] }],
+
+  "banks": [{ "id": "b0", "axis_deg": 0, "bore_m": 0.056, "stroke_m": 0.058, "deck_height_m": 0.092,
+              "cylinders": [
+                { "crank": "c0", "journal": 0,
+                  "rod": { "length_m": 0.105, "mass_kg": 0.19 }, "piston": { "mass_kg": 0.16, "comp_height_m": 0.02 },
+                  "head": { "chamber_cc": 9.5,
+                            "ports_2t": {
+                              "intake":  { "kind": "piston_port", "opens_bbdc_deg": 58, "closes_atdc_deg": 58 },
+                              "transfer": { "kind": "loop_scavenging", "count": 5, "angle_deg": [20, 55, 90, 125, 160] },
+                              "exhaust": { "kind": "piston_port", "opens_bbdc_deg": 82, "closes_bbdc_deg": 82,
+                                           "sub_ports": 3, "to": "exp0" } },
+                            "crankcase_as_pump": true } }
+              ] }],
+
+  "ignition": { "firing_order": [1, 3, 2, 4], "timing_curve": [[1000, 20], [9000, 32]],
+                "rev_limit_rpm": 11500, "limiter_style": "spark_cut",
+                "ignition_every": "revolution" },
+
+  "induction": { "type": "na", "crankcase_pump": { "volume_eff": 0.72 } },
+
+  "exhaust": {
+    "solver": { "method": "lax_wendroff", "cfl": 0.85, "nodes_per_m": 16, "wall_model": "adiabatic" },
+    "nodes": [
+      { "type": "expansion_chamber", "id": "exp0", "in": ["exhaust_ports_1_4"],
+        "head_pipe_len_m": 0.34, "head_pipe_d_m": 0.030,
+        "belly_L_m": 0.42, "belly_d_m": 0.075,
+        "stinger_L_m": 0.18, "stinger_d_m": 0.028,
+        "tap": { "stem": "tail", "gain": 1.1 } },
+      { "type": "junction", "id": "j0", "kind": "merge", "in": ["exp0", "exp1"], "to": "sil0" },
+      { "type": "muffler", "id": "sil0", "kind": "absorptive", "packing": { "V_L": 1.8 } },
+      { "type": "tailpipe", "id": "t0", "length_m": 0.4, "diameter_m": 0.060, "radiation": "unflanged" }
+    ]
+  },
+
+  "audio": {
+    "sim_freq_hz": "auto",
+    "auto_rule": "max(24*firing_hz, 26000)",
+    "sample_rate_hz": 48000,
+    "jitter": 0.5, "air_noise": 0.8, "hf_gain": 0.03,
+    "ring_ding": { "band_hz": [400, 1600], "gain": 0.35 }
+  }
+}

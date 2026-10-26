@@ -1,0 +1,42 @@
+{
+  "$schema": "ice://schema/engine.v1.json",
+  "meta": { "name": "13B Rotary + Supercharger, 40m runner", "engine_type": "rotary", "cycles_per_rev": 1, "layout_hint": "rotary-2rotor" },
+
+  "fuel": { "type": "gasoline", "molecular_afr": 14.7, "energy_density_j_per_kg": 44e6 },
+
+  "rotary": {
+    "rotors": [
+      { "id": "r0", "eccentricity_m": 0.015, "radius_m": 0.105, "thickness_m": 0.08, "intake_port": "int0", "exhaust_port": "ex0", "phase_deg": 0 },
+      { "id": "r1", "eccentricity_m": 0.015, "radius_m": 0.105, "thickness_m": 0.08, "intake_port": "int0", "exhaust_port": "ex1", "phase_deg": 180 }
+    ],
+    "cooling": "peripheral",
+    "porting": { "intake": "bridge", "exhaust": "street" }
+  },
+
+  "induction": {
+    "type": "supercharger",
+    "supercharger": { "type": "roots", "displacement_L_per_rev": 1.4, "drive": { "ratio": 1.6, "style": "belt", "slip": 0.02 },
+                      "parasitic_nm": 35, "whistle_band_hz": [900, 2600] },
+    "plenum": { "id": "pl0", "volume_L": 8 }
+  },
+
+  "exhaust": {
+    "solver": { "method": "lax_wendroff", "cfl": 0.85, "nodes_per_m": 8, "max_nodes_per_pipe": 320, "wall_model": "adiabatic" },
+    "nodes": [
+      { "type": "pipe", "id": "ex0", "length_m": 40.0, "diameter_m": 0.040, "bends": 6, "wall_temp_c": 120,
+        "tap": { "stem": "tail", "gain": 1.0 } },
+      { "type": "pipe", "id": "ex1", "length_m": 40.0, "diameter_m": 0.040, "bends": 6, "wall_temp_c": 120,
+        "tap": { "stem": "tail", "gain": 1.0 } },
+      { "type": "tailpipe", "id": "t0", "in": ["ex0", "ex1"], "radiation": "unflanged",
+        "tap": { "stem": "tail", "gain": 1.0 } }
+    ]
+  },
+
+  "audio": {
+    "sim_freq_hz": "auto",
+    "auto_rule": "max(24*firing_hz, 16000)",
+    "sample_rate_hz": 48000,
+    "jitter": 0.42, "air_noise": 0.55, "hf_gain": 0.02,
+    "ir_convolution": { "enabled": true, "mode": "tmm_generated", "conv_mix": 0.35 }
+  }
+}

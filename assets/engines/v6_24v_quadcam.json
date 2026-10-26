@@ -1,0 +1,74 @@
+{
+  "$schema": "ice://schema/engine.v1.json",
+  "meta": { "name": "24-valve quad-cam V6", "engine_type": "piston4t", "layout_hint": "V6-60deg" },
+
+  "fuel": { "type": "gasoline", "molecular_afr": 14.7, "energy_density_j_per_kg": 44e6 },
+
+  "crankshafts": [{ "id": "c0", "throw_m": 0.044, "inertia_kgm2": 0.16, "friction_nm": 12,
+                    "journals": [ { "angle_deg": 0 }, { "angle_deg": 240 }, { "angle_deg": 120 },
+                                  { "angle_deg": 0 }, { "angle_deg": 240 }, { "angle_deg": 120 } ] }],
+
+  "banks": [
+    { "id": "bL", "axis_deg": -30, "bore_m": 0.089, "deck_height_m": 0.205,
+      "cylinders": [
+        { "crank": "c0", "journal": 0, "ignition_wire": "w1",
+          "rod": { "length_m": 0.145, "mass_kg": 0.55 }, "piston": { "mass_kg": 0.4, "comp_height_m": 0.03 },
+          "head": { "chamber_cc": 42, "valves": 4,
+                    "cam": { "intake": { "profile": "intake-aggressive", "lobe_sep_deg": 108, "advance_deg": 5, "vvt": "hydraulic" },
+                             "exhaust": { "profile": "exhaust-aggressive", "lobe_sep_deg": 108, "retard_deg": 8, "vvt": "none" } },
+                    "intake_port": { "flow_k": "k_carb(260)", "runner_len_m": 0.16, "to": "plL" },
+                    "exhaust_port": { "flow_k": "k_carb(220)", "to": "colL" } } }
+      ] },
+    { "id": "bR", "axis_deg": 30, "bore_m": 0.089, "deck_height_m": 0.205,
+      "cylinders": [
+        { "crank": "c0", "journal": 3, "ignition_wire": "w2",
+          "rod": { "length_m": 0.152, "mass_kg": 0.55 }, "piston": { "mass_kg": 0.4, "comp_height_m": 0.03 },
+          "head": { "chamber_cc": 42, "valves": 4,
+                    "cam": { "intake": { "profile": "intake-aggressive", "lobe_sep_deg": 108, "advance_deg": 5, "vvt": "hydraulic" },
+                             "exhaust": { "profile": "exhaust-aggressive", "lobe_sep_deg": 108, "retard_deg": 8, "vvt": "none" } },
+                    "intake_port": { "flow_k": "k_carb(260)", "runner_len_m": 0.16, "to": "plR" },
+                    "exhaust_port": { "flow_k": "k_carb(220)", "to": "colR" } } }
+      ] }
+  ],
+
+  "camshafts": {
+    "profiles": {
+      "intake-aggressive": { "duration_050_deg": 238, "lift_m": 0.0104, "duration_style": "harmonic", "steps": 100, "gamma": 0.9 },
+      "exhaust-aggressive": { "duration_050_deg": 232, "lift_m": 0.0098, "duration_style": "harmonic", "steps": 100, "gamma": 0.9 }
+    },
+    "actuation": "dohc_belt",
+    "valves_per_cyl": 4
+  },
+
+  "ignition": { "firing_order": [1, 4, 2, 5, 3, 6], "timing_curve": [[700, 12], [3500, 30], [6800, 38]],
+                "rev_limit_rpm": 7500, "limiter_style": "spark_cut" },
+
+  "induction": {
+    "type": "na",
+    "plena": [
+      { "id": "plL", "volume_L": 1.9, "velocity_stack": { "bell": true, "diameter_m": 0.055 } },
+      { "id": "plR", "volume_L": 1.9, "velocity_stack": { "bell": true, "diameter_m": 0.055 } }
+    ]
+  },
+
+  "exhaust": {
+    "solver": { "method": "lax_wendroff", "cfl": 0.85, "nodes_per_m": 12, "wall_model": "adiabatic" },
+    "nodes": [
+      { "type": "collector", "id": "colL", "kind": "tri_y", "equal_length": true, "primary_L_m": 0.7, "primary_d_m": 0.042,
+        "secondary_L_m": 0.4, "secondary_d_m": 0.052, "out": "muf0", "tap": { "stem": "header", "gain": 0.8 } },
+      { "type": "collector", "id": "colR", "kind": "tri_y", "equal_length": true, "primary_L_m": 0.7, "primary_d_m": 0.042,
+        "secondary_L_m": 0.4, "secondary_d_m": 0.052, "out": "muf0", "tap": { "stem": "header", "gain": 0.8 } },
+      { "type": "muffler", "id": "muf0", "kind": "chambered", "chambers": [ { "L_m": 0.22, "V_L": 5 }, { "L_m": 0.18, "V_L": 3.5 } ],
+        "perforated": { "diameter_m": 0.048, "porosity": 0.10 }, "ir_from": "tmm", "tap": { "stem": "tail", "gain": 0.7 } },
+      { "type": "tailpipe", "id": "t0", "length_m": 0.4, "diameter_m": 0.057, "radiation": "unflanged",
+        "tap": { "stem": "tail", "gain": 1.0 } }
+    ]
+  },
+
+  "audio": {
+    "sim_freq_hz": "auto",
+    "auto_rule": "max(22*firing_hz, 20000)",
+    "sample_rate_hz": 48000,
+    "jitter": 0.38, "air_noise": 0.65, "hf_gain": 0.012
+  }
+}

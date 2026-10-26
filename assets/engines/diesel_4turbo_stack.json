@@ -1,0 +1,50 @@
+{
+  "$schema": "ice://schema/engine.v1.json",
+  "meta": { "name": "Quad-turbo diesel, open exhaust (stack)", "engine_type": "piston4t", "layout_hint": "I6-diesel" },
+
+  "fuel": { "type": "diesel", "molecular_afr": 14.5, "energy_density_j_per_kg": 42.5e6,
+            "ignition": { "model": "wiebe_cetane", "cetane": 52, "injection": "common_rail",
+                          "rail_pressure_bar": 1800, "soi_before_tdc_deg": 8 } },
+
+  "crankshafts": [{ "id": "c0", "throw_m": 0.09, "inertia_kgm2": 0.85, "friction_nm": 26,
+                    "journals": [ { "angle_deg": 0 }, { "angle_deg": 120 }, { "angle_deg": 240 },
+                                  { "angle_deg": 240 }, { "angle_deg": 120 }, { "angle_deg": 0 } ] }],
+
+  "banks": [{ "id": "b0", "axis_deg": 0, "bore_m": 0.126, "stroke_m": 0.166, "deck_height_m": 0.32,
+              "cylinders": [
+                { "crank": "c0", "journal": 0, "ignition_wire": "w1",
+                  "rod": { "length_m": 0.30, "mass_kg": 2.7 }, "piston": { "mass_kg": 2.2, "comp_height_m": 0.07 },
+                  "head": { "chamber_shape": "reentrant_bowl", "chamber_cc": 95, "valves": 4,
+                            "intake_port": { "flow_k": "k_carb(320)", "to": "int0" },
+                            "exhaust_port": { "flow_k": "k_carb(290)", "to": "turb1_in" } } }
+              ] }],
+
+  "ignition": { "firing_order": [1, 5, 3, 6, 2, 4], "timing_curve": [[700, -8], [1800, 2], [3200, 14]],
+                "rev_limit_rpm": 4200, "limiter_style": "fuel_cut", "governor": true },
+
+  "induction": {
+    "type": "turbo",
+    "plenum": { "id": "pl0", "volume_L": 12, "aftercooler": { "effectiveness": 0.75, "pressure_drop_k": 0.004 } }
+  },
+
+  "exhaust": {
+    "solver": { "method": "lax_wendroff", "cfl": 0.8, "nodes_per_m": 10, "wall_model": "adiabatic" },
+    "nodes": [
+      { "type": "turbo", "id": "turb1", "in": ["exhaust_ports"], "turbine": { "a_r": 0.95, "eff": 0.72 },
+        "wastegate": { "style": "external", "diameter_m": 0.038, "opens_bar": 3.2 },
+        "out": "man0" },
+      { "type": "junction", "id": "man0", "kind": "merge", "in": ["turb1_out"], "to": "stack0" },
+      { "type": "stack", "id": "stack0", "length_m": 1.2, "diameter_m": 0.102, "radiation": "open_bell",
+        "tap": { "stem": "tail", "gain": 1.4 } }
+    ],
+    "turbine_array": { "count": 4, "arrangement": "sequential_compound", "shared_wastegate": false }
+  },
+
+  "audio": {
+    "sim_freq_hz": "auto",
+    "auto_rule": "max(20*firing_hz, 14000)",
+    "sample_rate_hz": 48000,
+    "jitter": 0.30, "air_noise": 0.75, "hf_gain": 0.008,
+    "diesel_knock": { "enabled": true, "gain": 0.6, "band_hz": [1200, 3800] }
+  }
+}

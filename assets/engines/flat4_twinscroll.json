@@ -1,0 +1,70 @@
+{
+  "$schema": "ice://schema/engine.v1.json",
+  "meta": { "name": "Twin-scroll turbo flat-4 (EJ-style)", "engine_type": "piston4t", "layout_hint": "flat-4" },
+
+  "fuel": { "type": "gasoline", "molecular_afr": 14.7, "energy_density_j_per_kg": 44e6 },
+
+  "crankshafts": [{ "id": "c0", "throw_m": 0.043, "inertia_kgm2": 0.18, "friction_nm": 11,
+                    "journals": [ { "angle_deg": 0 }, { "angle_deg": 180 }, { "angle_deg": 180 }, { "angle_deg": 0 } ] }],
+
+  "banks": [
+    { "id": "bL", "axis_deg": 180, "bore_m": 0.0995, "deck_height_m": 0.207,
+      "cylinders": [
+        { "crank": "c0", "journal": 0, "ignition_wire": "w1",
+          "rod": { "length_m": 0.131, "mass_kg": 0.62 }, "piston": { "mass_kg": 0.47, "comp_height_m": 0.032 },
+          "head": { "chamber_cc": 50, "valves": 4,
+                    "intake_port": { "flow_k": "k_carb(240)", "runner_len_m": 0.22, "to": "pl0" },
+                    "exhaust_port": { "flow_k": "k_carb(200)", "to": "scrollA" } } },
+        { "crank": "c0", "journal": 2, "ignition_wire": "w3",
+          "rod": { "ref": ".banks[0].cylinders[0].rod" }, "piston": { "ref": ".banks[0].cylinders[0].piston" },
+          "head": { "chamber_cc": 50, "valves": 4,
+                    "intake_port": { "flow_k": "k_carb(240)", "runner_len_m": 0.22, "to": "pl0" },
+                    "exhaust_port": { "flow_k": "k_carb(200)", "to": "scrollB" } } }
+      ] },
+    { "id": "bR", "axis_deg": 0, "bore_m": 0.0995, "deck_height_m": 0.207,
+      "cylinders": [
+        { "crank": "c0", "journal": 1, "ignition_wire": "w2", "head": { "chamber_cc": 50, "valves": 4,
+            "intake_port": { "flow_k": "k_carb(240)", "runner_len_m": 0.22, "to": "pl0" },
+            "exhaust_port": { "flow_k": "k_carb(200)", "to": "scrollB" } } },
+        { "crank": "c0", "journal": 3, "ignition_wire": "w4", "head": { "chamber_cc": 50, "valves": 4,
+            "intake_port": { "flow_k": "k_carb(240)", "runner_len_m": 0.22, "to": "pl0" },
+            "exhaust_port": { "flow_k": "k_carb(200)", "to": "scrollA" } } }
+      ] }
+  ],
+
+  "ignition": { "firing_order": [1, 3, 2, 4], "timing_curve": [[800, 14], [4000, 28], [6800, 34]],
+                "rev_limit_rpm": 7200, "limiter_style": "spark_cut_fuel_retain" },
+
+  "induction": {
+    "type": "turbo",
+    "turbo": { "compressor": { "a_r": 0.55, "eff": 0.74, "surge_line": "gt2871r.json" },
+               "turbine": { "a_r": 0.64, "housing": "twin_scroll", "scroll_split": "1-3/2-4" },
+               "spool_inertia_kgm2": 3.2e-5,
+               "blowoff": { "style": "recirc", "opens_bar": 0.15, "flutter": true } },
+    "plenum": { "id": "pl0", "volume_L": 3.2, "intercooler": { "effectiveness": 0.82, "pressure_drop_k": 0.006 } }
+  },
+
+  "exhaust": {
+    "solver": { "method": "lax_wendroff", "cfl": 0.85, "nodes_per_m": 12, "wall_model": "adiabatic" },
+    "nodes": [
+      { "type": "junction", "id": "scrollA", "kind": "merge", "in": ["cyl1", "cyl2"], "to": "turb_in_scrollA" },
+      { "type": "junction", "id": "scrollB", "kind": "merge", "in": ["cyl3", "cyl4"], "to": "turb_in_scrollB" },
+      { "type": "turbo",   "id": "turb0", "in": ["scrollA", "scrollB"],
+        "turbine": { "a_r": 0.64, "eff": 0.70 }, "wastegate": { "style": "internal", "opens_bar": 1.1 }, "out": "dp0" },
+      { "type": "pipe",    "id": "dp0", "length_m": 0.85, "diameter_m": 0.076, "bends": 2, "tap": { "stem": "mid", "gain": 0.5 } },
+      { "type": "muffler", "id": "muf0", "kind": "straight_through",
+        "packing": { "material": "fiberglass", "V_L": 14 }, "ir_from": "tmm",
+        "tap": { "stem": "tail", "gain": 0.75 } },
+      { "type": "tailpipe","id": "t0", "length_m": 0.5, "diameter_m": 0.089, "radiation": "unflanged",
+        "tap": { "stem": "tail", "gain": 1.0 } }
+    ]
+  },
+
+  "audio": {
+    "sim_freq_hz": "auto",
+    "auto_rule": "max(22*firing_hz, 18000)",
+    "sample_rate_hz": 48000,
+    "jitter": 0.45, "air_noise": 0.6, "hf_gain": 0.015,
+    "flat4_rumble": { "unequal_length_harness": true, "exhaust_pulse_skew": 0.18 }
+  }
+}
