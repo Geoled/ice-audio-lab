@@ -6,7 +6,8 @@ namespace ice {
 
 double flowMoles(GasState &a, GasState &b, double k, double dt) {
     const double Pa = a.pressure(), Pb = b.pressure();
-    if (std::abs(Pa - Pb) < 1e-9) return 0;
+    if (std::abs(Pa - Pb) < 1e-6) return 0;
+    if (k <= 0) return 0;
 
     const bool forward = Pa > Pb;
     GasState &src = forward ? a : b;
@@ -16,12 +17,12 @@ double flowMoles(GasState &a, GasState &b, double k, double dt) {
     const double P1 = dst.pressure();
     const double ratio = P1 / std::max(P0, 1e-6);
     const double g = src.heatCapacityRatio();
-    const double T0 = std::max(src.temperature(), 1.0);
+    const double T0 = std::max(src.temperature(), 200.0);
 
     double mdot;  // mol/s through restriction
     const double crit = std::pow(2.0 / (g + 1.0), g / (g - 1.0));
     if (ratio <= crit) {
-        // choked
+        // choked flow
         mdot = k * P0 / std::sqrt(R_GAS * T0) *
                std::sqrt(g) * std::pow(2.0 / (g + 1.0), (g + 1.0) / (2.0 * (g - 1.0)));
     } else {
@@ -31,45 +32,62 @@ double flowMoles(GasState &a, GasState &b, double k, double dt) {
     }
 
     double dn = mdot * dt;
-
-    // energy per mol of source
-    const double e_per_mol = src.E / std::max(src.n, 1e-12);
-
-    // do not move more than available or more than equilibrates pressure
-    const double n_eq = (dst.pressure() >= src.pressure())
-        ? 0.0
-        : std::min(src.n,
-            (src.pressure() - dst.pressure()) * dst.V * dst.dof / (2.0 * e_per_mol) );
-    dn = std::min(dn, 0.9 * src.n);
-    dn = std::min(dn, n_eq);
     if (dn <= 0) return 0;
 
-    transferMix(src, dst, dn);
-    src.n -= dn;
-    src.E -= e_per_mol * dn;
-
-    const double dir = forward ? 1.0 : -1.0;
-    return dir * dn;
-}
-
-void transferMix(GasState &src, GasState &dst, double dn) {
-    const double f = dn / std::max(src.n, 1e-12);
-    const double sf = std::clamp(1.0 - f, 0.0, 1.0);
+    // energy per mol of the source charge
     const double e_per_mol = src.E / std::max(src.n, 1e-12);
 
+    // never move more than what is available, and never overshoot
+    // pressure equilibrium between the two volumes
+    dn = std::min(dn, 0.5 * src.n);
+    if (dn <= 0) return 0;
+
+    // equilibrium cap: dn such that src.P == dst.P afterwards (approx)
+    // P = 2E/(dof*V); moving dn mol at e_per_mol:
+    //   src: E' = E - e*dn, n' = n - dn, P_src' = 2(E-e*dn)/(dof*(n-dn)R... ) via T
+    // simplified: use pressure-equivalent moles
+    const double srcP = src.pressure(), dstP = dst.pressure();
+    const double T_src = src.temperature();
+    // moles that would equalize pressures if T stayed:
+    const double dnEq = (srcP - dstP) * dst.V /
+                        (R_GAS * std::max(0.5 * (T_src + dst.temperature()), 200.0));
+    if (dnEq > 0) dn = std::min(dn, dnEq);
+    if (dn <= 0) return 0;
+
+    // --- transfer: composition, moles, energy (single authoritative move) ---
+    const double sn = src.n;
     dst.x_fuel  = (dst.x_fuel  * dst.n + src.x_fuel  * dn) / std::max(dst.n + dn, 1e-12);
     dst.x_o2    = (dst.x_o2    * dst.n + src.x_o2    * dn) / std::max(dst.n + dn, 1e-12);
     dst.x_inert = (dst.x_inert * dst.n + src.x_inert * dn) / std::max(dst.n + dn, 1e-12);
     dst.n += dn;
     dst.E += e_per_mol * dn;
 
-    src.x_fuel  *= sf; src.x_o2 *= sf; src.x_inert *= sf;
-    (void)src; (void)dst;
+    src.n = sn - dn;
+    src.E -= e_per_mol * dn;
+    // normalize source fractions (they are ratios, renormalize defensively)
+    const double sum = src.x_fuel + src.x_o2 + src.x_inert;
+    if (sum > 1.0 + 1e-9) {
+        src.x_fuel /= sum; src.x_o2 /= sum; src.x_inert /= sum;
+    }
+
+    const double dir = forward ? 1.0 : -1.0;
+    return dir * dn;
+}
+
+void transferMix(GasState &src, GasState &dst, double dn) {
+    // kept for compatibility; the logic now lives in flowMoles
+    const double e_per_mol = src.E / std::max(src.n, 1e-12);
+    dst.x_fuel  = (dst.x_fuel  * dst.n + src.x_fuel  * dn) / std::max(dst.n + dn, 1e-12);
+    dst.x_o2    = (dst.x_o2    * dst.n + src.x_o2    * dn) / std::max(dst.n + dn, 1e-12);
+    dst.x_inert = (dst.x_inert * dst.n + src.x_inert * dn) / std::max(dst.n + dn, 1e-12);
+    dst.n += dn;
+    dst.E += e_per_mol * dn;
+    src.n -= dn;
+    src.E -= e_per_mol * dn;
 }
 
 void setVolume(GasState &s, double newV) {
-    // E stays (adiabatic free expansion approximation used by engine-sim too);
-    // compression heating emerges from the work term added by the piston.
+    // E stays; compression heating comes from the piston work term in the engine.
     s.V = std::max(newV, 1e-9);
 }
 

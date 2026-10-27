@@ -32,9 +32,9 @@ public:
 
     // telemetry for UI
     double lastOutPeak() const { return m_peak; }
-    size_t pendingInput() const { return m_ring.size(); }
+    size_t pendingInput() const { return m_ring.size() / std::max(1, m_nTaps); }
 
-    // waveform capture for the UI (mono, recent)
+    // waveform capture for the UI (mono, recent); power-of-two size
     static constexpr int WAVE_CAP = 4096;
     float waveBuf[WAVE_CAP] = {};
 
@@ -42,17 +42,15 @@ private:
     struct TapFilter {
         double dc_prev_in = 0, dc_prev_out = 0;
         double last = 0;
-        double jitterPhase = 0;
     };
 
     Params m_p;
     int m_nTaps = 2;
     SpscRing<double> m_ring;      // sim-rate tap frames (nTaps interleaved)
     std::vector<TapFilter> m_filters;
-    double m_phase = 0;           // frac step through ring at audio rate
-    double m_lastSim = 0;
-    std::vector<double> m_prevFrame, m_curFrame;
-    double m_lpf = 0, m_hpf = 0;
+    double m_prev[8] = {}, m_cur[8] = {};
+    double m_phase = 0;
+    double m_rateErr = 0;
     double m_peak = 0;
     double m_agcGain = 1.0;
     double m_simRateEstimate = 18000.0;

@@ -127,17 +127,17 @@ void App::drawPlots() {
 void App::drawControls() {
     auto &tel = m_engine->telemetry();
     ImGui::SetNextWindowPos(ImVec2(8, 640), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_Once);
     ImGui::Begin("Controls");
 
     ImGui::TextUnformatted("Throttle (hold W for 100%)");
-    ImGui::SliderFloat("##throttle", (float *)&m_throttleUi, 0.0f, 1.0f, "%.0f%%");
+    ImGui::SliderFloat("##throttle", &m_throttleUiF, 0.0f, 1.0f, "%.0f%%");
     ImGui::SameLine();
-    if (ImGui::Button("Idle##btn")) m_throttleUi = 0;
+    if (ImGui::Button("Idle##btn")) m_throttleUiF = 0;
     ImGui::SameLine();
-    if (ImGui::Button("50%##btn")) m_throttleUi = 0.5;
+    if (ImGui::Button("50%##btn")) m_throttleUiF = 0.5f;
     ImGui::SameLine();
-    if (ImGui::Button("WOT##btn")) m_throttleUi = 1.0;
+    if (ImGui::Button("WOT##btn")) m_throttleUiF = 1.0f;
 
     if (ImGui::Button(tel.starter ? "Starter ON (S)" : "Starter OFF (S)")) {
         m_engine->setStarter(!tel.starter);
@@ -155,7 +155,8 @@ void App::drawControls() {
     if (ImGui::SliderFloat("jitter", &jit, 0.0f, 1.0f)) m_synth.setJitter(jit);
 
     ImGui::Separator();
-    ImGui::TextWrapped("Keys: W throttle100 | S starter | A ignition | F5 reload config");
+    ImGui::TextWrapped("Keys: W throttle 100%% | S starter | A ignition");
+    ImGui::TextWrapped("Note: click a free area of the window first so ImGui text fields don't eat the keys.");
     ImGui::End();
 }
 

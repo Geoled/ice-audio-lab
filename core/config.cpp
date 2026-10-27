@@ -10,14 +10,15 @@ namespace ice {
 
 using nlohmann::json;
 
-// SCFM -> our k units (mol/s per sqrt(J/mol) style). Engine-sim calibrates
-// k through a flow formula; we map linearly and tune by ear against engine-sim.
+// SCFM -> our k units. Calibrated so that k_carb(100) yields ~1.9 mol/s
+// through the isentropic orifice formula at atmospheric conditions
+// (mdot = k * P0/sqrt(R*T) * Phi; Phi ~= 0.66 at P ratio 0.9).
 double kCarb(double scfm) {
-    // empirical scale: 100 SCFM carb -> usable k for our formula
-    return scfm * 5e-11;
+    // 100 SCFM ~= 0.0472 m^3/s ~= 1.91 mol/s at 25C
+    return scfm * 4.6e-5;
 }
 double k28inH2O(double scfm) {
-    return scfm * 5e-11 * 0.8;
+    return scfm * 4.6e-5 * 0.8;
 }
 
 static double parseFlowK(const json &j) {
@@ -91,10 +92,15 @@ bool loadEngineJson(const std::string &path, EngineConfig &out, std::string &err
                         cc.bore_m = bore;
                         cc.stroke_m = stroke;
                         cc.journal = cj.value("journal", 0);
-                        cc.rod_length_m = cj.value("rod/length_m", deck - stroke / 2 - 0.03);
+                        cc.rod_length_m = deck - stroke / 2 - 0.03;
                         if (cj.contains("rod")) cc.rod_length_m = cj["rod"].value("length_m", cc.rod_length_m);
-                        cc.piston_mass_kg = cj.value("piston/mass_kg", 0.42);
+                        cc.piston_mass_kg = 0.42;
                         if (cj.contains("piston")) cc.piston_mass_kg = cj["piston"].value("mass_kg", cc.piston_mass_kg);
+                        cc.comp_height_m = 0.030;
+                        if (cj.contains("piston")) cc.comp_height_m = cj["piston"].value("comp_height_m", cc.comp_height_m);
+                        // default port flow if head omits it (usable mid-size values)
+                        cc.intake_flow_k = kCarb(220);
+                        cc.exhaust_flow_k = kCarb(180);
                         cc.chamber_cc = 45;
                         if (cj.contains("head")) {
                             const auto &h = cj["head"];
@@ -155,9 +161,6 @@ bool loadEngineJson(const std::string &path, EngineConfig &out, std::string &err
         }
 
         // exhaust (S0: collector node drives pipes)
-        if (j.contains("exhaust") && j.contains("exhaust/nodes")) {
-            // noop - handled below via j["exhaust"]["nodes"]
-        }
         if (j.contains("exhaust")) {
             const auto &ex = j["exhaust"];
             if (ex.contains("nodes")) {
@@ -177,10 +180,8 @@ bool loadEngineJson(const std::string &path, EngineConfig &out, std::string &err
         // audio
         if (j.contains("audio")) {
             const auto &a = j["audio"];
-            if (a.value("sim_freq_hz", "auto") == std::string("auto") ||
-                a.value("sim_freq_hz", "auto") == "auto") {
-                // auto: 22*firing + 18000 clamp; firing unknown until first run
-                out.audio.sim_freq_hz = 0; // marker: compute at runtime
+            if (a.contains("sim_freq_hz") && a["sim_freq_hz"].is_string()) {
+                out.audio.sim_freq_hz = 0; // "auto": compute at runtime
             } else {
                 out.audio.sim_freq_hz = a.value("sim_freq_hz", 18000.0);
             }

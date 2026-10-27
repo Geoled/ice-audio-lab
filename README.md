@@ -38,6 +38,15 @@ build\Release\ice-audio-lab.exe assets\engines\my_engine.json
 | **S** | стартер (тумблер) |
 | **A** | зажигание (тумблер) |
 
+Порядок запуска: **S** (стартер) → подождать раскрутки ~1 с → **A** (зажигание) → **W** (газ).
+
+## Тесты
+
+```
+build\Release\ice-headless.exe assets\engines\baseline_i4.json
+```
+Прогоняет 40 с симуляции без звука/окна и печатает RPM/момент/выхлопной tap. Успех = `SMOKE TEST PASS`.
+
 ## UI
 
 * RPM / момент (мгновенный и средний) / мощность / MAP

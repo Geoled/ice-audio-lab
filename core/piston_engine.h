@@ -43,6 +43,9 @@ public:
 
     Exhaust1D &exhaust() { return m_exhaust; }
 
+    // scratch buffer for port pressures (avoids allocation in step)
+    std::vector<double> m_portPressure;
+
 private:
     double pistonPos(int cyl) const;      // 0 at TDC .. 1 full
     double chamberVolume(int cyl) const;  // m^3
@@ -62,6 +65,7 @@ private:
 
     GasState m_plenum;
     GasState m_atm;
+    GasState m_exhaustReservoir;  // virtual collector at ~1 atm
 
     Exhaust1D m_exhaust;
     EngineTelemetry m_tel;
@@ -70,6 +74,7 @@ private:
     double m_cycleWork = 0;
     double m_cycleAngleStart = 0;
     double m_torqueSmooth = 0;
+    double m_lastFire[64] = {-1};  // spark arm state per cylinder (-1 armed, +1 fired)
 
     uint32_t m_rng = 123456789u;
 };

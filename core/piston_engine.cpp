@@ -8,15 +8,23 @@ namespace ice {
 
 // ---------------------------------------------------------------------------
 // helpers
+// 4T cycle, theta 0..4pi per cylinder:
+//   0      : TDC overlap (end of exhaust / start of intake)
+//   0..pi  : intake stroke
+//   pi..2pi: compression
+//   2pi    : firing TDC (spark)
+//   2pi..3pi: power stroke
+//   3pi..4pi: exhaust stroke
+// Intake lobe centered lobe_sep AFTER the overlap TDC; exhaust lobe centered
+// lobe_sep BEFORE the next overlap TDC (i.e. at 4pi - lobe_sep).
 static double lobeLift(const CamProfile &cam, double cycleAngle, bool exhaust) {
-    // cycleAngle: 0..4pi (720°). Lobe centered at lobe_sep for intake (after TDC
-    // overlap), exhaust centered before TDC.
-    constexpr double PI2 = 2.0 * M_PI;
     const double center = exhaust
-        ? (2.0 * M_PI - cam.lobe_sep_deg * M_PI / 180.0)   // before TDC exhaust
-        : (cam.lobe_sep_deg * M_PI / 180.0);               // after TDC intake
-    double d = std::fmod(cycleAngle - center + 4.0 * M_PI, 2.0 * PI2);
-    if (d > PI2) d -= PI2; // wrap to -2pi..2pi
+        ? (4.0 * M_PI - cam.lobe_sep_deg * M_PI / 180.0)   // before overlap TDC
+        : (cam.lobe_sep_deg * M_PI / 180.0);               // after overlap TDC
+    // shortest signed angular distance, wrapped to [-2pi, 2pi]
+    double d = std::fmod(cycleAngle - center, 4.0 * M_PI);
+    if (d > 2.0 * M_PI) d -= 4.0 * M_PI;
+    if (d < -2.0 * M_PI) d += 4.0 * M_PI;
     const double half = (cam.duration_050_deg * 0.5) * M_PI / 180.0;
     const double x = std::abs(d);
     if (x >= half) return 0;
@@ -53,6 +61,7 @@ double PistonEngine::chamberVolume(int cyl) const {
 PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
     m_cyl.resize(cfg.cylinders.size());
     m_wires.resize(cfg.cylinders.size());
+    m_portPressure.resize(cfg.cylinders.size(), P_ATM);
 
     // plenum gas (air at atm)
     m_plenum.V = cfg.intake.plenum_L * 1e-3;
@@ -65,12 +74,15 @@ PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
     m_atm.E = 0.5 * m_atm.dof * m_atm.n * R_GAS * T_REF;
     m_atm.x_o2 = 0.21; m_atm.x_inert = 0.79;
 
-    // cylinder initial gas
-    for (auto &c : m_cyl) {
-        c.gas.V = 1e-3;
-        c.gas.n = P_ATM * c.gas.V / (R_GAS * T_REF);
-        c.gas.E = 0.5 * c.gas.dof * c.gas.n * R_GAS * T_REF;
-        c.gas.x_o2 = 0.21; c.gas.x_inert = 0.79;
+    // cylinder initial gas: match theta=0 (TDC) volume so the first step has
+    // no synthetic compression jump
+    for (size_t i = 0; i < m_cyl.size(); ++i) {
+        const double v0 = cfg.cylinders[i].chamber_cc * 1e-6; // TDC volume at theta 0
+        m_cyl[i].gas.V = v0;
+        m_cyl[i].volume = v0;
+        m_cyl[i].gas.n = P_ATM * v0 / (R_GAS * T_REF);
+        m_cyl[i].gas.E = 0.5 * m_cyl[i].gas.dof * m_cyl[i].gas.n * R_GAS * T_REF;
+        m_cyl[i].gas.x_o2 = 0.21; m_cyl[i].gas.x_inert = 0.79;
     }
 
     Exhaust1D::Config ec;
@@ -81,6 +93,12 @@ PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
     ec.tail_d_m = cfg.tail_d_m;
     ec.nodes_per_m = 12;
     m_exhaust.initialize(ec);
+
+    // virtual collector reservoir
+    m_exhaustReservoir.V = 10.0;
+    m_exhaustReservoir.n = P_ATM * m_exhaustReservoir.V / (R_GAS * 800.0);
+    m_exhaustReservoir.E = 0.5 * m_exhaustReservoir.dof * m_exhaustReservoir.n * R_GAS * 800.0;
+    m_exhaustReservoir.x_o2 = 0.05; m_exhaustReservoir.x_inert = 0.95;
 }
 
 double PistonEngine::ignitionAdvanceDeg(double rpm) const {
@@ -100,11 +118,11 @@ double PistonEngine::ignitionAdvanceDeg(double rpm) const {
 void PistonEngine::step(double dt) {
     const int nCyl = (int)m_cyl.size();
 
-    // starter motor torque
+    // starter motor torque (geared starter: high torque at low speed)
     double externalTorque = 0;
     if (m_starter) {
-        const double stallRpm = 250;
-        const double base = 120.0; // Nm at 0 rpm
+        const double stallRpm = 300;
+        const double base = 450.0; // Nm at the crank (geared)
         externalTorque += base * std::clamp(1.0 - rpm() / stallRpm, 0.0, 1.0);
     }
     // engine friction (viscous + constant)
@@ -119,14 +137,23 @@ void PistonEngine::step(double dt) {
 
         // piston position & volume
         const double pos = pistonPos(i);
-        const double prevV = st.gas.V;
         const double newV = chamberVolume(i);
-        const double dV = newV - prevV;
+        const double prevV = st.volume;   // last stored volume
         const double area = M_PI * cy.bore_m * cy.bore_m / 4.0;
 
-        // compression work: dE = -P dV (work done BY gas is +P dV -> E decreases)
-        const double P_before = st.gas.pressure();
-        st.gas.E -= P_before * dV * 0.5; // half-explicit to keep stable
+        // --- compression/expansion work (trapezoid: symmetric, no energy drift) ---
+        // W = P dV done BY gas. E -= (P0 + P1)/2 * dV  where P1 is the
+        // pressure at the trapezoid midpoint, computed from an adiabatic
+        // scale of the current E to the new volume.
+        const double dV = newV - prevV;
+        if (std::abs(dV) > 1e-15) {
+            const double P0 = st.gas.pressure();
+            // adiabatic midpoint pressure: E_mid is E scaled by (V0/V1)^(gamma-1)
+            const double g = st.gas.heatCapacityRatio();
+            const double scale = std::pow(std::max(prevV, 1e-9) / std::max(newV, 1e-9), g - 1.0);
+            const double P1 = P0 * scale;
+            st.gas.E -= 0.5 * (P0 + P1) * dV;
+        }
         setVolume(st.gas, newV);
 
         st.volume = newV;
@@ -139,6 +166,21 @@ void PistonEngine::step(double dt) {
         // gas exchange
         doValves(i, dt);
 
+        // blowby: rings leak high cylinder pressure into the crankcase;
+        // this relieves the compression lock at cranking speeds
+        {
+            const double crankcaseP = P_ATM;
+            if (st.gas.pressure() > crankcaseP * 1.05) {
+                const double leakK = 3e-7; // tuned: relieves ~50 kPa/s per 100 kPa over
+                GasState crank;
+                crank.V = 5e-3;
+                crank.n = P_ATM * crank.V / (R_GAS * 320.0);
+                crank.E = 0.5 * crank.dof * crank.n * R_GAS * 320.0;
+                crank.x_o2 = 0.2; crank.x_inert = 0.8;
+                flowMoles(st.gas, crank, leakK, dt);
+            }
+        }
+
         // ignition: fire when the plug angle arrives
         const double advanceDeg = ignitionAdvanceDeg(rpm());
         const double fireAngle = std::fmod(4.0 * M_PI + (2.0 * M_PI - advanceDeg * M_PI / 180.0), 4.0 * M_PI);
@@ -147,14 +189,19 @@ void PistonEngine::step(double dt) {
         const double cylCycle = std::fmod(cyclePos + jDeg * M_PI / 180.0, 4.0 * M_PI);
         bool sparkNow = false;
         if (m_ignition && rpm() < m_cfg.ignition.rev_limit_rpm) {
-            static thread_local double lastFire[64] = {};
-            const double tol = std::max(dt * std::abs(m_omega), 0.02);
-            const double diff = std::abs(cylCycle - fireAngle);
-            const double diff2 = std::abs(diff - 4.0 * M_PI);
-            if ((diff < tol || diff2 < tol) && m_theta - lastFire[i] > 3.0 * M_PI) {
+            const double tol = std::max(dt * std::abs(m_omega), 0.05);
+            double diff = std::abs(cylCycle - fireAngle);
+            diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
+            if (diff < tol && m_lastFire[i] < 0.0) {   // armed: one spark per pass
                 sparkNow = true;
-                lastFire[i] = m_theta;
+                m_lastFire[i] = 1.0;                    // disarm until re-arm below
             }
+        }
+        // re-arm the spark plug once the cylinder moves away from the fire angle
+        {
+            double diff = std::abs(cylCycle - fireAngle);
+            diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
+            if (diff > 0.5 && m_lastFire[i] > 0.0) m_lastFire[i] = -1.0;
         }
         if (sparkNow && !st.lit && st.gas.x_fuel > 1e-6) {
             // equivalence ratio gate
@@ -173,8 +220,7 @@ void PistonEngine::step(double dt) {
         if (st.lit) {
             m_rng = m_rng * 1664525u + 1013904223u;
             const double r01 = (m_rng >> 8) / 16777216.0;
-            const double dE = combustStep(st.gas, st.flame_pos, st.burn_eff, dt, rpm(), 450.0, r01);
-            (void)dE;
+            combustStep(st.gas, st.flame_pos, st.burn_eff, dt, rpm(), 450.0 + 273.15, r01);
             if (st.flame_pos >= 1.0) st.lit = false;
         }
 
@@ -208,46 +254,46 @@ void PistonEngine::step(double dt) {
     if (rpm() > m_cfg.ignition.rev_limit_rpm + 300) {
         m_omega = (m_cfg.ignition.rev_limit_rpm + 300) * 2.0 * M_PI / 60.0;
     }
-    if (rpm() < 0) m_omega = 0;
+    if (m_omega < 0) m_omega = 0;
 
     m_theta += m_omega * dt;
+    m_cycleWork += gasTorque * m_omega * dt;
     if (m_theta >= 4.0 * M_PI) {
         m_theta -= 4.0 * M_PI;
-        // cycle complete: update average torque from work
+        // cycle complete: average torque over the cycle
         m_torqueSmooth = m_torqueSmooth * 0.7 + 0.3 * (m_cycleWork / (4.0 * M_PI));
         m_cycleWork = 0;
     }
-    m_cycleWork += gasTorque * m_omega * dt;
 
     // ---- 1D exhaust: port pressures -> pipes ----
-    static thread_local std::vector<double> pPorts, vPorts;
-    pPorts.resize(nCyl); vPorts.resize(nCyl);
     for (int i = 0; i < nCyl; ++i) {
         const auto &st = m_cyl[i];
-        const double ported = st.exhaust_lift > 0.01
+        const double lift = st.exhaust_lift;
+        const double ported = lift > 0.01
             ? st.gas.pressure()
-            : P_ATM + 0.1 * (st.gas.pressure() - P_ATM) * st.exhaust_lift;
-        pPorts[i] = ported;
-        vPorts[i] = 0;
+            : P_ATM;
+        m_portPressure[i] = ported;
     }
-    m_exhaust.step(dt, pPorts.data(), vPorts.data(), nCyl);
+    m_exhaust.step(dt, m_portPressure.data(), nullptr, nCyl);
 
     // ---- plenum fill (throttle) ----
-    const double throttleArea = M_PI * std::pow(m_cfg.intake.throttle_bore_m * 0.5, 2)
-        * std::clamp(m_throttle, 0.0, 1.0);
-    // flow from atmosphere into plenum
     {
-        GasState virtualSource = m_atm;
-        // inject small fuel vapor into plenum for AFR modeling (port injection)
-        const double k = throttleArea * 4e-4 + m_cfg.intake.idle_flow_k * 1e3;
+        const double throttleArea = M_PI * std::pow(m_cfg.intake.throttle_bore_m * 0.5, 2)
+            * std::clamp(m_throttle, 0.0, 1.0);
+        // throttle k calibrated like a carb of the same bore area
+        const double kThrottle = throttleArea * 3.0;
+        const double k = kThrottle + m_cfg.intake.idle_flow_k;
         const double dn = flowMoles(m_atm, m_plenum, k, dt);
-        // enrich plenum with fuel vapor to reach ~14.7 AFR molar-ish
+        // port injection: fuel vapor proportional to charge (stoich ~60:1 molar)
         if (dn > 0) {
-            const double fuelMol = dn / 60.0; // stoich mol ratio ~ 60:1 for C8H16 (12.5 O2 per fuel, air 21% O2)
-            m_plenum.x_fuel = std::min(0.05, m_plenum.x_fuel + fuelMol / std::max(m_plenum.n, 1e-9));
+            const double fuelMol = dn / 60.0;
+            const double nNew = m_plenum.n; // flowMoles already added air
+            m_plenum.x_fuel = (m_plenum.x_fuel * nNew + fuelMol) / std::max(nNew, 1e-9);
+            m_plenum.x_fuel = std::min(m_plenum.x_fuel, 0.04);
         }
-        (void)virtualSource;
     }
+    // burn off stale fuel in plenum slowly when no flow (prevents infinite build-up)
+    m_plenum.x_fuel *= (1.0 - 0.02 * dt);
 
     // ---- telemetry ----
     m_tel.rpm = rpm();
@@ -273,24 +319,18 @@ void PistonEngine::doValves(int cyl, double dt) {
         (void)dn;
     }
 
-    // exhaust: cylinder -> a virtual collector volume at 1 atm (boundary),
-    // we don't model return flow into cylinder from pipes in S0 except through
-    // exhaust1d injection; use a big reservoir.
+    // exhaust: cylinder -> virtual collector volume held near atmospheric
+    // (models the open boundary; the 1D pipes read port pressure separately)
     if (st.exhaust_lift > 0.01) {
-        static thread_local GasState exhaustReservoir = []() {
-            GasState g;
-            g.V = 10.0;
-            g.n = P_ATM * g.V / (R_GAS * 800.0);
-            g.E = 0.5 * g.dof * g.n * R_GAS * 800.0;
-            g.x_o2 = 0.05; g.x_inert = 0.95;
-            return g;
-        }();
+        GasState &exhaustReservoir = m_exhaustReservoir;
         const double k = cy.exhaust_flow_k * st.exhaust_lift;
         flowMoles(st.gas, exhaustReservoir, k, dt);
-        // keep reservoir near atmospheric (open end)
+        // relax reservoir back toward ambient so it never pressurizes
         const double nEq = P_ATM * exhaustReservoir.V / (R_GAS * 800.0);
-        exhaustReservoir.n = nEq;
-        exhaustReservoir.E = 0.5 * exhaustReservoir.dof * nEq * R_GAS * 800.0;
+        const double relax = 0.05;
+        exhaustReservoir.n += relax * (nEq - exhaustReservoir.n);
+        const double eEq = 0.5 * exhaustReservoir.dof * nEq * R_GAS * 800.0;
+        exhaustReservoir.E += relax * (eEq - exhaustReservoir.E);
     }
 }
 

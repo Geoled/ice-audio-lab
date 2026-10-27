@@ -45,6 +45,10 @@ public:
     // collector tap
     double collectorSignal() const { return m_collectorSignal; }
 
+    // debug access for tests
+    const PipeSegment &primarySeg(int i) const { return m_primary[i]; }
+    const PipeSegment &tailSeg() const { return m_tail; }
+
     const Config &config() const { return m_cfg; }
     int nodeCount() const;
 

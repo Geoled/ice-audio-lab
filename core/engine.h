@@ -52,7 +52,7 @@ struct CrankConfig {
 struct IntakeConfig {
     double plenum_L = 3.5;
     double throttle_bore_m = 0.065;
-    double idle_flow_k = 2e-10;
+    double idle_flow_k = 0.05;   // mol/s-scale at reference conditions
 };
 
 struct IgnitionConfig {

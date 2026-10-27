@@ -45,6 +45,7 @@ public:
     // input state from WndProc
     bool keys[256] = {};
     bool keysPressed[256] = {};
+    bool wantTextInput() const;  // true when an ImGui text field has focus
 
 private:
     static LRESULT WINAPI WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -66,8 +67,8 @@ private:
     EngineConfig m_cfg;
     Synth m_synth;
     double m_simFreq = 18000;
-    double m_throttleUi = 0;       // slider value (smoothed)
-    double m_throttle = 0;         // engine target (max of slider and key W)
+    float m_throttleUiF = 0;       // ImGui slider (source of truth)
+    double m_throttle = 0;         // engine target (W overrides while held)
     std::string m_enginePath;
 
     // perf

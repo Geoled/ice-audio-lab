@@ -120,5 +120,20 @@ target_link_libraries(ice-audio-lab PRIVATE
     miniaudio
     opengl32
     dwmapi
-    d3d11     # for the dxgi mini-loader fallback (kept minimal)
 )
+
+# ------------------------------------------------------------------
+# headless smoke test (no UI, no audio device)
+# ------------------------------------------------------------------
+add_executable(ice-headless tests/headless.cpp)
+target_link_libraries(ice-headless PRIVATE ice_core)
+target_compile_definitions(ice-headless PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-firststep tests/firststep.cpp)
+target_link_libraries(ice-firststep PRIVATE ice_core)
+target_compile_definitions(ice-firststep PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-exhaust tests/exhaust_test.cpp)
+target_link_libraries(ice-exhaust PRIVATE ice_core)
+target_compile_definitions(ice-exhaust PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+

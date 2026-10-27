@@ -87,7 +87,7 @@ bool App::init(const std::string &engineJson) {
     ImGui::CreateContext();
     ImPlot::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard; // keep W/S/A/D for the app
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_InitForOpenGL(m_hwnd);
     ImGui_ImplOpenGL3_Init("#version 130");
@@ -124,6 +124,11 @@ bool App::init(const std::string &engineJson) {
     return true;
 }
 
+bool App::wantTextInput() const {
+    return ImGui::GetCurrentContext() != nullptr &&
+           ImGui::GetIO().WantTextInput;
+}
+
 void App::run() {
     MSG msg;
     ZeroMemory(&msg, sizeof(msg));
@@ -132,7 +137,6 @@ void App::run() {
     while (msg.message != WM_QUIT) {
         const auto t0 = std::chrono::steady_clock::now();
 
-        BOOL r;
         while (PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
@@ -140,17 +144,18 @@ void App::run() {
         }
         if (msg.message == WM_QUIT) break;
 
-        // input: W -> full throttle while held
-        if (keys['W']) m_throttle = 1.0;
-        else m_throttle = m_throttleUi;
-
-        if (keysPressed['S']) { /* starter toggle handled below */ }
-        static bool starterOn = false;
-        if (keysPressed['S']) {
-            starterOn = !starterOn;
-            m_engine->setStarter(starterOn);
+        // throttle: W wins while held (but not when typing into a field)
+        const bool typing = wantTextInput();
+        if (!typing && keys['W']) {
+            m_throttle = 1.0;          // momentary WOT
+        } else {
+            m_throttle = m_throttleUiF; // slider is the source of truth
         }
-        if (keysPressed['A']) {
+
+        if (!typing && keysPressed['S']) {
+            m_engine->setStarter(!m_engine->telemetry().starter);
+        }
+        if (!typing && keysPressed['A']) {
             m_engine->setIgnition(!m_engine->telemetry().ignition);
         }
         std::fill(keysPressed, keysPressed + 256, false);
