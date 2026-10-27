@@ -61,15 +61,20 @@ void Exhaust1D::step(double dt, const double *portPressure, const double *portVe
 void Exhaust1D::injectPorts(const double *portPressure, const double *portVel, int nPorts,
                              const double *portLift) {
     (void)portVel;
-    // inject the cylinder port pressure at the head of each primary while the
-    // exhaust valve is open; a closed valve decouples the pipe (weak leak only)
+    // inject the cylinder port pressure at the head of each primary ONLY
+    // while the exhaust valve is open; a closed valve fully decouples the
+    // pipe (leak constant 0.02), which keeps the tap pulse-shaped and
+    // prevents a DC pressure floor in the collector.
     for (int i = 0; i < (int)m_primary.size() && i < nPorts; ++i) {
         if (m_primary[i].nodes.empty()) continue;
         auto &first = m_primary[i].nodes.front();
         const double lift = portLift ? std::clamp(portLift[i], 0.0, 1.0) : 1.0;
-        // coupling strength follows valve lift; closed valve -> tiny leak
-        const double relax = 0.05 + 0.85 * lift;
-        first.p += relax * (portPressure[i] - first.p);
+        // Binary source gating: open valve -> full cylinder pressure; closed
+        // valve -> ambient (the port vents). This keeps pulse amplitude intact
+        // while preventing a DC floor from compression-pressure leakage.
+        const double srcP = (lift > 0.01) ? portPressure[i] : P_ATM;
+        const double relax = (lift > 0.01) ? (0.05 + 0.85 * lift) : 0.02;
+        first.p += relax * (srcP - first.p);
         // blowdown gust velocity from the pressure jump (valve open only)
         if (lift > 0.01) {
             const double dp = portPressure[i] - first.p;

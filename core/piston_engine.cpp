@@ -71,6 +71,7 @@ PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
         for (int i = 0; i < 64; ++i) {
             m_lastFire[i] = -1.0;   // all plugs armed
             m_firingSlot[i] = 0;
+            m_cycleOffset[i] = 0;
         }
         const int n = (int)cfg.cylinders.size();
         std::vector<int> slotOf(std::min(n, 64), -1);
@@ -85,6 +86,22 @@ PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
             if (slotOf[i] < 0) slotOf[i] = nextSlot++;
         }
         for (int i = 0; i < n && i < 64; ++i) m_firingSlot[i] = slotOf[i];
+
+        // Stroke offset: cylinders sharing a crank journal must run in
+        // opposite 4T cycles (their piston TDCs coincide every 360 deg, but
+        // one is at compression TDC while the other is at overlap TDC).
+        // Walk the firing order; whenever a cylinder's journal was already
+        // seen, flip its stroke to the opposite half of the 4pi cycle.
+        std::vector<int> journalSeen(360, -1);  // journal deg -> first cyl index
+        for (int i = 0; i < n && i < 64; ++i) {
+            const int jDeg = (int)cfg.crank.journal_deg[std::min(i, (int)cfg.crank.journal_deg.size() - 1)];
+            if (journalSeen[jDeg] < 0) {
+                journalSeen[jDeg] = i;
+                m_cycleOffset[i] = 0;
+            } else {
+                m_cycleOffset[i] = 1;   // opposite stroke pair
+            }
+        }
     }
 
     // plenum gas (air at atm)
@@ -160,8 +177,12 @@ void PistonEngine::step(double dt) {
         auto &st = m_cyl[i];
         const double jDeg = m_cfg.crank.journal_deg[std::min(i, (int)m_cfg.crank.journal_deg.size()-1)];
         const double jRad = jDeg * M_PI / 180.0;
-        // cylinder-local cycle angle (piston and valves share this phase)
-        const double cylCycle = std::fmod(std::fmod(m_theta, 4.0 * M_PI) + jRad, 4.0 * M_PI);
+        // cylinder-local cycle angle: journal phase + stroke offset for
+        // cylinders sharing a journal (their 4T cycles are 2pi apart)
+        const double strokeOff = (double)m_cycleOffset[i] * 2.0 * M_PI;
+        const double cylCycle = std::fmod(
+            std::fmod(m_theta + jRad + strokeOff, 4.0 * M_PI) + 4.0 * M_PI,
+            4.0 * M_PI);
 
         // piston position & volume
         const double pos = pistonPos(i);
@@ -228,6 +249,25 @@ void PistonEngine::step(double dt) {
                 ++m_sparkCount[i];
             }
         }
+        // soft-cut rev limiter: past the limit, randomly drop sparks (brap).
+        // The farther above the limit, the more sparks are skipped.
+        else if (m_ignition && rpm() >= m_cfg.ignition.rev_limit_rpm) {
+            const double tol = std::max(dt * std::abs(m_omega), 0.05);
+            double diff = std::abs(globalCycle - fireAngle);
+            diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
+            if (diff < tol && m_lastFire[i] < 0.0) {
+                m_lastFire[i] = 1.0;
+                // skip probability grows with overspeed
+                m_rng = m_rng * 1664525u + 1013904223u;
+                const double r01 = (m_rng >> 8) / 16777216.0;
+                const double over = (rpm() - m_cfg.ignition.rev_limit_rpm) / 300.0;
+                const double skipProb = std::clamp(0.3 + 0.6 * over, 0.3, 0.95);
+                if (r01 > skipProb) {
+                    sparkNow = true;
+                    ++m_sparkCount[i];
+                }
+            }
+        }
         // re-arm the spark plug once the cycle moves away from the fire angle
         {
             double diff = std::abs(globalCycle - fireAngle);
@@ -288,9 +328,10 @@ void PistonEngine::step(double dt) {
         + 0.005 * nCyl; // rod/piston reflected inertia (rough)
     m_omega += totalTorque / std::max(inertia, 0.01) * dt;
 
-    // rev limiter hard cut (spark already gated above)
-    if (rpm() > m_cfg.ignition.rev_limit_rpm + 300) {
-        m_omega = (m_cfg.ignition.rev_limit_rpm + 300) * 2.0 * M_PI / 60.0;
+    // rev limiter: soft-cut handles the spark skipping above; clamp hard only
+    // far past the limit so the engine can never run away
+    if (rpm() > m_cfg.ignition.rev_limit_rpm + 600) {
+        m_omega = (m_cfg.ignition.rev_limit_rpm + 600) * 2.0 * M_PI / 60.0;
     }
     if (m_omega < 0) m_omega = 0;
 
@@ -307,10 +348,9 @@ void PistonEngine::step(double dt) {
     for (int i = 0; i < nCyl; ++i) {
         const auto &st = m_cyl[i];
         const double lift = st.exhaust_lift;
-        const double ported = lift > 0.01
-            ? st.gas.pressure()
-            : P_ATM;
-        m_portPressure[i] = ported;
+        // port sees the cylinder only through the open valve; closed port
+        // reports the residual header pressure (no fresh injection)
+        m_portPressure[i] = st.gas.pressure();
         m_portLift[i] = lift;
     }
     m_exhaust.step(dt, m_portPressure.data(), nullptr, nCyl, m_portLift.data());

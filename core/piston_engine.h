@@ -82,6 +82,7 @@ private:
     double m_torqueSmooth = 0;
     double m_lastFire[64];        // spark arm state per cylinder (-1 armed, +1 fired)
     int m_firingSlot[64] = {0};    // per-cylinder slot in the 720-deg firing order
+    int m_cycleOffset[64] = {0};  // 0 or 1: opposite-stroke pair on shared journal
 
     uint32_t m_rng = 123456789u;
     bool m_nanDetected = false;

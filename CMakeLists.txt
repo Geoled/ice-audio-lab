@@ -137,3 +137,15 @@ add_executable(ice-exhaust tests/exhaust_test.cpp)
 target_link_libraries(ice-exhaust PRIVATE ice_core)
 target_compile_definitions(ice-exhaust PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 
+add_executable(ice-validation tests/validation.cpp)
+target_link_libraries(ice-validation PRIVATE ice_core)
+target_compile_definitions(ice-validation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-pulseshape tests/pulse_shape.cpp)
+target_link_libraries(ice-pulseshape PRIVATE ice_core)
+target_compile_definitions(ice-pulseshape PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-pulsesync tests/pulse_sync.cpp)
+target_link_libraries(ice-pulsesync PRIVATE ice_core)
+target_compile_definitions(ice-pulsesync PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+

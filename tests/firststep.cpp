@@ -39,11 +39,14 @@ int main(int argc, char **argv) {
         if (i % 250 == 0) {
             const auto &c0 = eng.cylinders()[0];
             const auto &c1 = eng.cylinders()[1];
-            printf("i=%6d  theta=%9.5f  rpm=%9.2f  sparks(c1..c4)=%d/%d/%d/%d  P0=%9.1f P1=%9.1f  lit=%d/%d  fuel=%.5f/%.5f\n",
+            const auto &c2 = eng.cylinders()[2];
+            const auto &c3 = eng.cylinders()[3];
+            printf("i=%6d  th=%9.5f  rpm=%8.1f  lit=%d%d%d%d  intL=%.1f/%.1f/%.1f/%.1f exhL=%.1f/%.1f/%.1f/%.1f P=%.0f/%.0f/%.0f/%.0f\n",
                    i, eng.crankAngle(), eng.rpm(),
-                   eng.sparkCounts()[0], eng.sparkCounts()[1], eng.sparkCounts()[2], eng.sparkCounts()[3],
-                   c0.gas.pressure(), c1.gas.pressure(),
-                   (int)c0.lit, (int)c1.lit, c0.gas.x_fuel, c1.gas.x_fuel);
+                   (int)c0.lit, (int)c1.lit, (int)c2.lit, (int)c3.lit,
+                   c0.intake_lift, c1.intake_lift, c2.intake_lift, c3.intake_lift,
+                   c0.exhaust_lift, c1.exhaust_lift, c2.exhaust_lift, c3.exhaust_lift,
+                   c0.gas.pressure()/1e5, c1.gas.pressure()/1e5, c2.gas.pressure()/1e5, c3.gas.pressure()/1e5);
         }
     }
     return 0;
