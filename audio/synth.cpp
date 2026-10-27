@@ -103,17 +103,27 @@ void Synth::renderBlock(float *out, int frames) {
 
         double mono = pulse + body;
 
-        // ---- AGC: fast attack, slow release; never collapses to silence ----
+        // ---- AGC: peak follower with fast attack and ~0.3 s release. ----
+        // The gain tracks target/peak continuously (no long integrator lag):
+        // when the signal weakens, peak decays within ~0.3 s and the gain
+        // comes back up immediately — no silence gap, no "white noise only"
+        // recovery tail.
         const double target = 0.25;
         const double mag = std::abs(mono);
-        m_peak = std::max(m_peak * m_peakDecay, mag);
-        double desired = 3.0;
-        if (m_peak > 1e-9) {
-            desired = std::min(3.0, target / m_peak);
+        if (mag > m_peak) {
+            m_peak = mag;                       // instant attack
+        } else {
+            m_peak *= m_peakDecay;              // release ~0.3 s
+            m_peak = std::fmax(m_peak, mag);
         }
-        const double k = (desired < m_agcGain) ? 0.02 : 0.0005;
-        m_agcGain += k * (desired - m_agcGain);
-        m_agcGain = std::clamp(m_agcGain, 1e-3, 4.0);
+        m_peak = std::clamp(m_peak, 1e-4, 10.0);
+        double desired = std::clamp(target / m_peak, 0.05, 8.0);
+        // smooth the gain toward desired (fast both ways, ~10 ms)
+        const double kUp = std::clamp(2.0 / m_p.sample_rate * 48000.0, 0.02, 0.5);
+        const double kDown = kUp * 0.5;
+        const double kk = (desired < m_agcGain) ? kDown : kUp;
+        m_agcGain += kk * (desired - m_agcGain);
+        m_agcGain = std::clamp(m_agcGain, 0.05, 8.0);
         double s = mono * m_agcGain * m_p.volume;
         s = std::tanh(s);
 

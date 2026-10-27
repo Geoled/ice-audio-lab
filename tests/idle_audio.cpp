@@ -1,6 +1,7 @@
 // tests/idle_audio.cpp — verify the synth keeps producing sound at zero
-// user throttle (idle governor + intake-noise layer). Runs the real synth
-// against the engine and measures output RMS in steady idle.
+// user throttle (idle governor + intake-noise layer) AND that releasing the
+// gas from WOT never produces a silence gap: RMS is measured over sliding
+// windows through the decel and idle phases.
 #include "../core/piston_engine.h"
 #include "../core/config.h"
 #include "../audio/synth.h"
@@ -18,7 +19,7 @@ int main(int argc, char **argv) {
 
     PistonEngine eng(cfg);
     eng.setIgnition(true); eng.setStarter(true);
-    eng.setThrottle(0.0);            // user gas released
+    eng.setThrottle(0.0);
     eng.setIdleControl(true);
 
     Synth::Params sp;
@@ -34,55 +35,51 @@ int main(int argc, char **argv) {
     synth.setEngineContext(0, 0, (int)cfg.cylinders.size());
 
     const double fSim = 18000, dt = 1.0 / fSim;
-    const int stepsPerSec = (int)fSim;
-    double taps[2] = {0, 0};
-
-    // 12 s: crank 5 s, then idle with governor, starter off at 8 s
-    for (int sec = 0; sec < 12; ++sec) {
-        if (sec >= 8) eng.setStarter(false);
-        for (int i = 0; i < stepsPerSec; ++i) {
-            eng.step(dt);
-            eng.computeAudioTap(taps, 2);
-            synth.writeTaps(taps, 2, dt);
-            synth.setEngineContext(eng.telemetry().rpm, eng.inductionNoise(),
-                                   (int)cfg.cylinders.size());
-        }
-        printf("t=%2ds  rpm=%7.1f  idleThr=%.3f  MAP=%.1f kPa\n",
-               sec, eng.rpm(), eng.telemetry().idleThrottle, eng.telemetry().map_kpa);
-    }
-
-    // measure audio RMS over the last 2 s (steady idle, user throttle 0)
     const int blockFrames = 480;
     std::vector<float> block(blockFrames * 2);
-    double sumSq = 0;
-    int nSamples = 0;
-    double peak = 0;
-    // feed sim + drain audio concurrently for 2 s worth of audio
-    const int audioSteps = (int)(2.0 * 48000 / blockFrames);
-    for (int b = 0; b < audioSteps; ++b) {
-        // produce enough sim steps for this audio block
-        const int need = (int)(blockFrames * (18000.0 / 48000.0));
-        for (int i = 0; i < need; ++i) {
-            eng.step(dt);
-            eng.computeAudioTap(taps, 2);
-            synth.writeTaps(taps, 2, dt);
-            synth.setEngineContext(eng.telemetry().rpm, eng.inductionNoise(),
-                                   (int)cfg.cylinders.size());
-        }
-        synth.renderBlock(block.data(), blockFrames);
-        for (int i = 0; i < blockFrames; ++i) {
-            const double l = block[i * 2 + 0];
-            sumSq += l * l;
-            peak = std::fmax(peak, std::fabs(l));
-            ++nSamples;
-        }
-    }
-    const double rms = std::sqrt(sumSq / std::max(nSamples, 1));
-    printf("\nidle audio: RMS=%.4f  peak=%.4f  over %d samples\n", rms, peak, nSamples);
 
-    // audible threshold: RMS > 0.005 (-46 dBFS) counts as clearly audible
-    const bool ok = rms > 0.005 && eng.rpm() > 400;
-    printf(ok ? "IDLE AUDIO PASS (engine idles and is audible)\n"
-              : "IDLE AUDIO FAIL (silent at zero throttle)\n");
+    // helper: run sim+audio for N seconds at a given throttle, collect
+    // per-100ms window RMS
+    auto runPhase = [&](double seconds, double throttle, const char *label) {
+        eng.setThrottle(throttle);
+        const int blocks = (int)(seconds * 48000 / blockFrames);
+        std::vector<double> rmsWindows;
+        for (int b = 0; b < blocks; ++b) {
+            const int need = (int)(blockFrames * (fSim / 48000.0));
+            for (int i = 0; i < need; ++i) {
+                eng.step(dt);
+                double taps[2];
+                eng.computeAudioTap(taps, 2);
+                synth.writeTaps(taps, 2, dt);
+                synth.setEngineContext(eng.telemetry().rpm, eng.inductionNoise(),
+                                       (int)cfg.cylinders.size());
+            }
+            synth.renderBlock(block.data(), blockFrames);
+            double sumSq = 0;
+            for (int i = 0; i < blockFrames; ++i) sumSq += (double)block[i * 2] * block[i * 2];
+            rmsWindows.push_back(std::sqrt(sumSq / blockFrames));
+        }
+        double mn = 1e30, mx = 0;
+        for (double v : rmsWindows) { mn = std::fmin(mn, v); mx = std::fmax(mx, v); }
+        printf("%-22s  rpm=%7.1f  rms(min=%.4f avg-of-last=%.4f max=%.4f)\n",
+               label, eng.rpm(), mn,
+               rmsWindows.empty() ? 0.0 : rmsWindows[rmsWindows.size() - 1], mx);
+        return mn;
+    };
+
+    // start: crank + settle to idle
+    runPhase(6.0, 0.0, "crank+idle");
+    // WOT burst
+    runPhase(5.0, 1.0, "WOT");
+    // release the gas — the critical phase
+    const double gapMin = runPhase(8.0, 0.0, "release (decel+idle)");
+    // steady idle again
+    const double idleMin = runPhase(4.0, 0.0, "steady idle");
+
+    const bool ok = gapMin > 0.003 && idleMin > 0.005 && eng.rpm() > 400;
+    printf("\nrelease-phase min RMS=%.4f, idle min RMS=%.4f, rpm=%.0f\n",
+           gapMin, idleMin, eng.rpm());
+    printf(ok ? "IDLE AUDIO PASS (no silence gap on throttle release)\n"
+              : "IDLE AUDIO FAIL (silence gap on throttle release)\n");
     return ok ? 0 : 2;
 }

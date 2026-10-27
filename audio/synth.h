@@ -22,10 +22,11 @@ public:
     double volume() const { return m_p.volume; }
     double jitter() const { return m_p.jitter; }
 
-    // AGC peak decay: set so the peak tracker falls to ~37% in ~0.5 s
+    // AGC peak decay: set so the peak tracker falls to ~37% in ~0.3 s
+    // (fast release = no silence gap when the throttle is released)
     void setSampleRate(double sr) {
         m_p.sample_rate = sr;
-        m_peakDecay = std::pow(0.3679, 1.0 / (0.5 * std::max(sr, 8000.0)));
+        m_peakDecay = std::pow(0.3679, 1.0 / (0.3 * std::max(sr, 8000.0)));
     }
 
     // sim thread: engine context for the noise layers (lock-free)
