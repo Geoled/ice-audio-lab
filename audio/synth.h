@@ -37,6 +37,7 @@ public:
     // waveform capture for the UI (mono, recent); power-of-two size
     static constexpr int WAVE_CAP = 4096;
     float waveBuf[WAVE_CAP] = {};
+    int waveHead() const { return m_wavePos; }  // for spectrum windowing
 
 private:
     struct TapFilter {

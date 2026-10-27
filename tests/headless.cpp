@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
     int tapCount = 0;
 
     // 40 seconds: 6s starter-only, then throttle, starter off at 15s
+    bool nanSeen = false;
     for (int sec = 0; sec < 40; ++sec) {
         eng.setThrottle(sec >= 6 ? 1.0 : 0.0);
         if (sec >= 15) eng.setStarter(false);
@@ -41,6 +42,7 @@ int main(int argc, char **argv) {
                 sumTap += m;
                 ++tapCount;
             }
+            if (eng.nanDetected()) nanSeen = true;
         }
         const auto &c0 = eng.cylinders()[0];
         printf("t=%2ds  rpm=%7.1f  torque_avg=%7.2f Nm  map=%6.1f kPa  tailTap=%9.4f  P0=%8.1fPa lit0=%d fuel0=%.5f\n",
@@ -53,7 +55,8 @@ int main(int argc, char **argv) {
     printf("\npeak |tail| = %.4f, mean |tail| = %.6f over %d samples\n",
            maxTap, tapCount ? sumTap / tapCount : 0.0, tapCount);
 
-    const bool ok = eng.rpm() > 500 && maxTap > 1e-6;
+    const bool ok = eng.rpm() > 500 && maxTap > 1e-6 && !nanSeen;
     printf(ok ? "SMOKE TEST PASS\n" : "SMOKE TEST FAIL (engine dead or silent)\n");
+    if (nanSeen) printf("NaN was detected and sanitized during the run!\n");
     return ok ? 0 : 2;
 }

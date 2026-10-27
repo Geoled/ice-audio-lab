@@ -129,6 +129,67 @@ bool App::wantTextInput() const {
            ImGui::GetIO().WantTextInput;
 }
 
+bool App::reloadEngine() {
+    EngineConfig newCfg;
+    std::string err;
+    if (!loadEngineJson(m_enginePath, newCfg, err)) {
+        m_reloadError = err;
+        return false;
+    }
+    m_cfg = newCfg;
+    m_engine = std::make_unique<PistonEngine>(m_cfg);
+    // keep UI state of throttle; engine restarts fresh
+    m_reloadError.clear();
+    return true;
+}
+
+void App::computeSpectrum() {
+    // simple Radix-2 FFT over the last 512 samples of the synth waveform
+    constexpr int N = 512;
+    static double re[N], im[N];
+
+    // take most recent N samples, oldest first
+    const int start = m_synth.waveHead(); // write head = oldest after wrap
+    for (int i = 0; i < N; ++i) {
+        re[i] = m_synth.waveBuf[(start + i) & (Synth::WAVE_CAP - 1)];
+        im[i] = 0.0;
+    }
+    // Hann window
+    for (int i = 0; i < N; ++i) {
+        const double w = 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (N - 1)));
+        re[i] *= w;
+    }
+    // bit-reversal + butterflies
+    for (int i = 1, j = 0; i < N; ++i) {
+        int bit = N >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+    }
+    for (int len = 2; len <= N; len <<= 1) {
+        const double ang = -2.0 * M_PI / len;
+        const double wr = std::cos(ang), wi = std::sin(ang);
+        for (int i = 0; i < N; i += len) {
+            double cwr = 1.0, cwi = 0.0;
+            for (int k = 0; k < len / 2; ++k) {
+                const double ur = re[i + k], ui = im[i + k];
+                const double vr = re[i + k + len / 2] * cwr - im[i + k + len / 2] * cwi;
+                const double vi = re[i + k + len / 2] * cwi + im[i + k + len / 2] * cwr;
+                re[i + k] = ur + vr; im[i + k] = ui + vi;
+                re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+                const double nwr = cwr * wr - cwi * wi;
+                cwi = cwr * wi + cwi * wr;
+                cwr = nwr;
+            }
+        }
+    }
+    // magnitude in dB, normalized
+    for (int i = 0; i < N / 2; ++i) {
+        const double mag = std::sqrt(re[i] * re[i] + im[i] * im[i]) / (N / 4.0);
+        m_spectrum[i] = (float)std::max(0.0, 20.0 * std::log10(std::max(mag, 1e-9)));
+    }
+}
+
 void App::run() {
     MSG msg;
     ZeroMemory(&msg, sizeof(msg));
@@ -158,6 +219,9 @@ void App::run() {
         if (!typing && keysPressed['A']) {
             m_engine->setIgnition(!m_engine->telemetry().ignition);
         }
+        if (!typing && keysPressed[VK_F5]) {
+            reloadEngine();
+        }
         std::fill(keysPressed, keysPressed + 256, false);
 
         m_engine->setThrottle(m_throttle);
@@ -170,6 +234,7 @@ void App::run() {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        computeSpectrum();
         drawUI();
 
         ImGui::Render();

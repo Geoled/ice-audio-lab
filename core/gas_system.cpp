@@ -64,11 +64,14 @@ double flowMoles(GasState &a, GasState &b, double k, double dt) {
 
     src.n = sn - dn;
     src.E -= e_per_mol * dn;
+    if (src.E < 0) src.E = 0;
     // normalize source fractions (they are ratios, renormalize defensively)
     const double sum = src.x_fuel + src.x_o2 + src.x_inert;
     if (sum > 1.0 + 1e-9) {
         src.x_fuel /= sum; src.x_o2 /= sum; src.x_inert /= sum;
     }
+    src.sanitize();
+    dst.sanitize();
 
     const double dir = forward ? 1.0 : -1.0;
     return dir * dn;

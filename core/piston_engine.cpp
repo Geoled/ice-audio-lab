@@ -134,6 +134,10 @@ void PistonEngine::step(double dt) {
     for (int i = 0; i < nCyl; ++i) {
         auto &cy = m_cfg.cylinders[i];
         auto &st = m_cyl[i];
+        const double jDeg = m_cfg.crank.journal_deg[std::min(i, (int)m_cfg.crank.journal_deg.size()-1)];
+        const double jRad = jDeg * M_PI / 180.0;
+        // cylinder-local cycle angle (piston and valves share this phase)
+        const double cylCycle = std::fmod(std::fmod(m_theta, 4.0 * M_PI) + jRad, 4.0 * M_PI);
 
         // piston position & volume
         const double pos = pistonPos(i);
@@ -142,13 +146,9 @@ void PistonEngine::step(double dt) {
         const double area = M_PI * cy.bore_m * cy.bore_m / 4.0;
 
         // --- compression/expansion work (trapezoid: symmetric, no energy drift) ---
-        // W = P dV done BY gas. E -= (P0 + P1)/2 * dV  where P1 is the
-        // pressure at the trapezoid midpoint, computed from an adiabatic
-        // scale of the current E to the new volume.
         const double dV = newV - prevV;
         if (std::abs(dV) > 1e-15) {
             const double P0 = st.gas.pressure();
-            // adiabatic midpoint pressure: E_mid is E scaled by (V0/V1)^(gamma-1)
             const double g = st.gas.heatCapacityRatio();
             const double scale = std::pow(std::max(prevV, 1e-9) / std::max(newV, 1e-9), g - 1.0);
             const double P1 = P0 * scale;
@@ -159,19 +159,18 @@ void PistonEngine::step(double dt) {
         st.volume = newV;
         st.piston_x_m = pos;
 
-        // valve lift
-        st.intake_lift = lobeLift(cy.cam_intake, m_theta, false);
-        st.exhaust_lift = lobeLift(cy.cam_exhaust, m_theta, true);
+        // valve lift (phased by the cylinder's own cycle angle)
+        st.intake_lift = lobeLift(cy.cam_intake, cylCycle, false);
+        st.exhaust_lift = lobeLift(cy.cam_exhaust, cylCycle, true);
 
         // gas exchange
         doValves(i, dt);
 
-        // blowby: rings leak high cylinder pressure into the crankcase;
-        // this relieves the compression lock at cranking speeds
+        // blowby: rings leak high cylinder pressure into the crankcase
         {
             const double crankcaseP = P_ATM;
             if (st.gas.pressure() > crankcaseP * 1.05) {
-                const double leakK = 3e-7; // tuned: relieves ~50 kPa/s per 100 kPa over
+                const double leakK = 3e-7;
                 GasState crank;
                 crank.V = 5e-3;
                 crank.n = P_ATM * crank.V / (R_GAS * 320.0);
@@ -181,12 +180,9 @@ void PistonEngine::step(double dt) {
             }
         }
 
-        // ignition: fire when the plug angle arrives
+        // ignition: fire when the plug angle arrives (per-cylinder phase)
         const double advanceDeg = ignitionAdvanceDeg(rpm());
         const double fireAngle = std::fmod(4.0 * M_PI + (2.0 * M_PI - advanceDeg * M_PI / 180.0), 4.0 * M_PI);
-        const double cyclePos = std::fmod(m_theta, 4.0 * M_PI);
-        const double jDeg = m_cfg.crank.journal_deg[std::min(i, (int)m_cfg.crank.journal_deg.size()-1)];
-        const double cylCycle = std::fmod(cyclePos + jDeg * M_PI / 180.0, 4.0 * M_PI);
         bool sparkNow = false;
         if (m_ignition && rpm() < m_cfg.ignition.rev_limit_rpm) {
             const double tol = std::max(dt * std::abs(m_omega), 0.05);
@@ -194,7 +190,7 @@ void PistonEngine::step(double dt) {
             diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
             if (diff < tol && m_lastFire[i] < 0.0) {   // armed: one spark per pass
                 sparkNow = true;
-                m_lastFire[i] = 1.0;                    // disarm until re-arm below
+                m_lastFire[i] = 1.0;
             }
         }
         // re-arm the spark plug once the cylinder moves away from the fire angle
@@ -204,12 +200,10 @@ void PistonEngine::step(double dt) {
             if (diff > 0.5 && m_lastFire[i] > 0.0) m_lastFire[i] = -1.0;
         }
         if (sparkNow && !st.lit && st.gas.x_fuel > 1e-6) {
-            // equivalence ratio gate
             const double afr = st.gas.x_fuel > 1e-9 ? (st.gas.x_o2 / st.gas.x_fuel) : 0;
             if (afr > 6.0 && afr < 40.0) {
                 st.lit = true;
                 st.flame_pos = 0;
-                // burn efficiency with randomness
                 m_rng = m_rng * 1664525u + 1013904223u;
                 const double r01 = (m_rng >> 8) / 16777216.0;
                 st.burn_eff = std::clamp(0.75 + 0.15 * (r01 - 0.5), 0.3, 0.95);
@@ -234,7 +228,6 @@ void PistonEngine::step(double dt) {
 
         // torque on crank from gas pressure (approximate: P*A*throw*sin)
         const double P = st.gas.pressure();
-        const double jRad = jDeg * M_PI / 180.0;
         const double sinTerm = std::sin(m_theta + jRad);
         const double torque = area * (P - P_ATM) * m_cfg.crank.throw_m * sinTerm;
         gasTorque += torque;
@@ -301,10 +294,16 @@ void PistonEngine::step(double dt) {
     m_tel.torque_avg_nm = m_torqueSmooth;
     m_tel.power_kw = m_torqueSmooth * std::abs(m_omega) / 1000.0;
     m_tel.map_kpa = m_plenum.pressure() / 1000.0;
-    m_tel.afr = 0;
     m_tel.throttle = m_throttle;
     m_tel.starter = m_starter;
     m_tel.ignition = m_ignition;
+
+    // NaN hunter: flag broken states for the UI
+    m_nanDetected = false;
+    if (!m_plenum.sane()) { m_plenum.sanitize(); m_nanDetected = true; }
+    for (auto &c : m_cyl) {
+        if (!c.gas.sane()) { c.gas.sanitize(); m_nanDetected = true; }
+    }
 }
 
 void PistonEngine::doValves(int cyl, double dt) {

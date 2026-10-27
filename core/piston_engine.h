@@ -42,6 +42,7 @@ public:
     double rpm() const { return m_omega * 60.0 / (2 * M_PI); }
 
     Exhaust1D &exhaust() { return m_exhaust; }
+    bool nanDetected() const { return m_nanDetected; }
 
     // scratch buffer for port pressures (avoids allocation in step)
     std::vector<double> m_portPressure;
@@ -77,6 +78,7 @@ private:
     double m_lastFire[64] = {-1};  // spark arm state per cylinder (-1 armed, +1 fired)
 
     uint32_t m_rng = 123456789u;
+    bool m_nanDetected = false;
 };
 
 } // namespace ice

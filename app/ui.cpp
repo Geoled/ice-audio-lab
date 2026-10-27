@@ -11,6 +11,7 @@ void App::drawUI() {
     drawDashboard();
     drawPlots();
     drawControls();
+    drawDebug();
 }
 
 void App::drawDashboard() {
@@ -32,8 +33,15 @@ void App::drawDashboard() {
     ImGui::Separator();
     ImGui::Text("sim: %.0f Hz, %d steps/frame, 1D nodes: %d",
                  m_simFreq, m_stepsThisFrame, m_engine->exhaust().nodeCount());
-    ImGui::Text("audio backlog: %zu samples",
-                 m_synth.pendingInput());
+    ImGui::Text("audio backlog: %zu frames  (%.0f ms)",
+                 m_synth.pendingInput(),
+                 1000.0 * (double)m_synth.pendingInput() / std::max(m_simFreq, 1.0));
+    if (m_engine->nanDetected()) {
+        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "WARNING: NaN detected (auto-sanitized)");
+    }
+    if (!m_reloadError.empty()) {
+        ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), "reload error: %s", m_reloadError.c_str());
+    }
     ImGui::End();
 }
 
@@ -92,7 +100,7 @@ void App::drawPlots() {
     ImGui::SetNextWindowSize(ImVec2(1140, 380), ImGuiCond_Once);
     ImGui::Begin("Audio & Performance");
 
-    if (ImPlot::BeginPlot("Waveform", ImVec2(-1, 150))) {
+    if (ImPlot::BeginPlot("Waveform", ImVec2(-1, 130))) {
         ImPlot::SetupAxes("sample", "amp", ImPlotAxisFlags_NoLabel);
         static double idx[Synth::WAVE_CAP];
         static double wavg[Synth::WAVE_CAP];
@@ -106,7 +114,19 @@ void App::drawPlots() {
         ImPlot::EndPlot();
     }
 
-    if (ImPlot::BeginPlot("Frame time / FPS", ImVec2(-1, 150))) {
+    if (ImPlot::BeginPlot("Spectrum (dB)", ImVec2(-1, 130), ImPlotFlags_Crosshairs)) {
+        ImPlot::SetupAxes("bin", "dB");
+        ImPlot::SetupAxisLimits(ImAxis_Y1, -60, 10, ImPlotCond_Once);
+        static double bins[256];
+        static double db[256];
+        static bool sinit = false;
+        if (!sinit) { for (int i = 0; i < 256; ++i) bins[i] = i; sinit = true; }
+        for (int i = 0; i < 256; ++i) db[i] = m_spectrum[i];
+        ImPlot::PlotBars("spec", bins, db, 256, 0.9);
+        ImPlot::EndPlot();
+    }
+
+    if (ImPlot::BeginPlot("Frame time / FPS", ImVec2(-1, 130))) {
         static double idx[PerfGraph::N];
         static double msHist[PerfGraph::N], loadHist[PerfGraph::N];
         static bool init = false;
@@ -155,8 +175,37 @@ void App::drawControls() {
     if (ImGui::SliderFloat("jitter", &jit, 0.0f, 1.0f)) m_synth.setJitter(jit);
 
     ImGui::Separator();
-    ImGui::TextWrapped("Keys: W throttle 100%% | S starter | A ignition");
-    ImGui::TextWrapped("Note: click a free area of the window first so ImGui text fields don't eat the keys.");
+    ImGui::TextWrapped("Keys: W throttle 100%% | S starter | A ignition | F5 reload config");
+    if (ImGui::Button("Reload engine (F5)")) reloadEngine();
+    ImGui::End();
+}
+
+void App::drawDebug() {
+    ImGui::SetNextWindowPos(ImVec2(8, 1010), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(420, 260), ImGuiCond_Once);
+    ImGui::Begin("Debug (per-cylinder)");
+
+    const auto &cyls = m_engine->cylinders();
+    const double theta = m_engine->crankAngle();
+    for (size_t i = 0; i < cyls.size(); ++i) {
+        const auto &c = cyls[i];
+        ImGui::PushID((int)i);
+        ImGui::Text("cyl %d: P=%8.1f kPa  V=%7.1f cc  lift i=%.2f e=%.2f  %s",
+                    (int)i,
+                    c.gas.pressure() / 1000.0,
+                    c.gas.V * 1e6,
+                    c.intake_lift, c.exhaust_lift,
+                    c.lit ? "LIT" : "   ");
+        ImGui::PopID();
+    }
+    ImGui::Separator();
+    ImGui::Text("theta = %.3f rad (%.1f deg)", theta, theta * 180.0 / M_PI);
+    ImGui::Text("tapCollector = %+.2f Pa   tapTail = %+.2f Pa",
+                 m_engine->exhaust().collectorSignal(),
+                 m_engine->exhaust().tailSignal());
+    const double latMs = 1000.0 * (double)m_synth.pendingInput() / std::max(m_simFreq, 1.0);
+    ImGui::Text("audio latency: %.1f ms (target %.0f ms)",
+                 latMs, m_cfg.audio.target_latency_s * 1000.0);
     ImGui::End();
 }
 

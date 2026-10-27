@@ -80,11 +80,19 @@ private:
 
     // live spectrum for UI (calculated on UI thread from waveBuf)
     float m_spectrum[512] = {};
+    std::string m_reloadError;
 
     // ui helpers
     void drawDashboard();
     void drawPlots();
     void drawControls();
+    void drawDebug();
+
+    // hot-reload the engine config (F5)
+    bool reloadEngine();
+
+    // compute the spectrum from the synth waveform (Radix-2 FFT, 512 bins)
+    void computeSpectrum();
 };
 
 } // namespace ice

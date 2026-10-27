@@ -25,6 +25,21 @@ struct GasState {
     double temperature() const {
         return (2.0 / dof) * (E / std::max(n * R_GAS, 1e-12));
     }
+    // clamp unphysical states after aggressive transfers (NaN hunter)
+    void sanitize() {
+        if (!std::isfinite(n) || n < 1e-15) n = 1e-15;
+        if (!std::isfinite(E) || E < 0) E = 0;
+        if (!std::isfinite(V) || V < 1e-9) V = 1e-9;
+        if (!std::isfinite(x_fuel))  x_fuel = 0;
+        if (!std::isfinite(x_o2))    x_o2 = 0;
+        if (!std::isfinite(x_inert)) x_inert = 0;
+        const double sum = x_fuel + x_o2 + x_inert;
+        if (sum > 1.5) { x_fuel /= sum; x_o2 /= sum; x_inert /= sum; }
+    }
+    bool sane() const {
+        return std::isfinite(n) && std::isfinite(E) && std::isfinite(V)
+            && E >= 0 && n > 0;
+    }
     double mass() const {
         // approx molar mass: fuel 0.114 kg/mol, O2 0.032, inert(N2) 0.028
         return n * (x_fuel * 0.114 + x_o2 * 0.032 + x_inert * 0.028);

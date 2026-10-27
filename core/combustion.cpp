@@ -56,6 +56,7 @@ double combustStep(GasState &gas, double &flamePos, double &eff,
     const double nCv = 0.5 * gas.dof * gas.n * R_GAS; // J/K
     const double dT_loss = (T_wall - T) * 0.02 * dt * 60.0;
     gas.E += dE + dT_loss * nCv * 0.01;
+    gas.sanitize();
 
     flamePos = newPos;
     return dE;
