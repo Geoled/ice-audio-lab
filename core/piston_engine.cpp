@@ -159,6 +159,28 @@ double PistonEngine::ignitionAdvanceDeg(double rpm) const {
 void PistonEngine::step(double dt) {
     const int nCyl = (int)m_cyl.size();
 
+    // idle governor: keeps the engine at ~idle rpm when the user is off the
+    // gas. The idle bypass is a real air path sized to carry idle airflow;
+    // the governor trims its opening (I term) with rate limiting + deadband.
+    if (m_idleControl && m_ignition) {
+        if (rpm() > 100.0) {
+            const double err = (m_idleRpmTarget - rpm()) / m_idleRpmTarget;
+            const double errEff = (std::abs(err) < 0.10) ? 0.0 : (err - 0.10 * (err > 0 ? 1 : -1));
+            const double rate = 0.6;
+            const double dInt = std::clamp(errEff * 0.8, -rate, rate) * dt;
+            m_idleThrottle = std::clamp(m_idleThrottle + dInt, 0.0, 1.0);
+        } else {
+            // below 100 rpm while ignition is on: crank-fire assist, open up
+            m_idleThrottle = std::clamp(m_idleThrottle + 1.5 * dt, 0.0, 1.0);
+        }
+        // user on the gas -> governor releases quickly
+        if (m_throttle > 0.1) m_idleThrottle *= (1.0 - 4.0 * dt);
+    } else {
+        m_idleThrottle *= (1.0 - 3.0 * dt);
+    }
+    const double idleAir = m_idleThrottle;
+    const double effThrottle = m_throttle;  // user throttle only for the main body
+
     // starter motor torque (geared starter: high torque at low speed)
     double externalTorque = 0;
     if (m_starter) {
@@ -355,13 +377,13 @@ void PistonEngine::step(double dt) {
     }
     m_exhaust.step(dt, m_portPressure.data(), nullptr, nCyl, m_portLift.data());
 
-    // ---- plenum fill (throttle) ----
+    // ---- plenum fill (throttle + governor-controlled idle bypass) ----
     {
         const double throttleArea = M_PI * std::pow(m_cfg.intake.throttle_bore_m * 0.5, 2)
-            * std::clamp(m_throttle, 0.0, 1.0);
-        // throttle k calibrated like a carb of the same bore area
+            * effThrottle;
+        const double idleK = m_cfg.intake.idle_flow_k * idleAir;
         const double kThrottle = throttleArea * 3.0;
-        const double k = kThrottle + m_cfg.intake.idle_flow_k;
+        const double k = kThrottle + idleK;
         const double dn = flowMoles(m_atm, m_plenum, k, dt);
         // port injection: fuel vapor proportional to charge (stoich ~60:1 molar)
         if (dn > 0) {
@@ -380,9 +402,10 @@ void PistonEngine::step(double dt) {
     m_tel.torque_avg_nm = m_torqueSmooth;
     m_tel.power_kw = m_torqueSmooth * std::abs(m_omega) / 1000.0;
     m_tel.map_kpa = m_plenum.pressure() / 1000.0;
-    m_tel.throttle = m_throttle;
+    m_tel.throttle = std::clamp(effThrottle + idleAir * 0.5, 0.0, 1.0);
     m_tel.starter = m_starter;
     m_tel.ignition = m_ignition;
+    m_tel.idleThrottle = idleAir;
 
     // NaN hunter: flag broken states for the UI
     m_nanDetected = false;
@@ -423,6 +446,13 @@ void PistonEngine::computeAudioTap(double *outTaps, int nTaps) const {
     // taps: 0 = header (collector), 1 = tail
     if (nTaps >= 1) outTaps[0] = m_exhaust.collectorSignal();
     if (nTaps >= 2) outTaps[1] = m_exhaust.tailSignal();
+}
+
+double PistonEngine::inductionNoise() const {
+    // 0 at standstill, ~0.25 at idle, ~1 at redline: intake roar that exists
+    // even with the exhaust taps quiet (part-throttle especially)
+    const double r = rpm() / 7000.0;
+    return std::clamp(r, 0.0, 1.0);
 }
 
 } // namespace ice

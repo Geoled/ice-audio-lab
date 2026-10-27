@@ -149,3 +149,7 @@ add_executable(ice-pulsesync tests/pulse_sync.cpp)
 target_link_libraries(ice-pulsesync PRIVATE ice_core)
 target_compile_definitions(ice-pulsesync PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 
+add_executable(ice-idleaudio tests/idle_audio.cpp)
+target_link_libraries(ice-idleaudio PRIVATE ice_audio)
+target_compile_definitions(ice-idleaudio PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+

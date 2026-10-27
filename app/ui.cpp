@@ -26,7 +26,7 @@ void App::drawDashboard() {
     ImGui::Text("Torque     %8.1f Nm (avg %.1f)", tel.torque_nm, tel.torque_avg_nm);
     ImGui::Text("Power      %8.1f kW", tel.power_kw);
     ImGui::Text("MAP       %8.1f kPa", tel.map_kpa);
-    ImGui::Text("Throttle   %8.0f %%", tel.throttle * 100);
+    ImGui::Text("Throttle   %8.0f %% (idle ctrl %+.0f%%)", tel.throttle * 100, tel.idleThrottle * 100);
     ImGui::Text("Starter    %s   Ignition %s",
                 tel.starter ? "ON" : "off",
                 tel.ignition ? "ON" : "off");

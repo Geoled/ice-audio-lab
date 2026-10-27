@@ -18,6 +18,7 @@ struct EngineTelemetry {
     bool starter = false;
     bool ignition = false;
     double load_cpu_pct = 0;
+    double idleThrottle = 0;  // governor contribution (telemetry)
 };
 
 class PistonEngine {
@@ -30,6 +31,10 @@ public:
     // audio tap: exhaust-port flow signal for this step (per cylinder into taps)
     void computeAudioTap(double *outTaps, int nTaps) const;
 
+    // air/induction noise level (0..1) for the synth's intake layer:
+    // rpm-weighted, always audible when the engine spins
+    double inductionNoise() const;
+
     const EngineConfig &config() const { return m_cfg; }
     EngineTelemetry &telemetry() { return m_tel; }
     const std::vector<CylinderState> &cylinders() const { return m_cyl; }
@@ -37,6 +42,8 @@ public:
     void setThrottle(double t01) { m_throttle = std::clamp(t01, 0.0, 1.0); }
     void setStarter(bool on) { m_starter = on; }
     void setIgnition(bool on) { m_ignition = on; }
+    void setIdleControl(bool on) { m_idleControl = on; }  // idle governor
+    double idleThrottle() const { return m_idleThrottle; }  // what the governor adds
 
     double crankAngle() const { return m_theta; }   // rad, 0..4pi cycle
     double rpm() const { return m_omega * 60.0 / (2 * M_PI); }
@@ -68,6 +75,9 @@ private:
     double m_throttle = 0;
     bool m_starter = false;
     bool m_ignition = false;
+    bool m_idleControl = true; // idle governor on by default
+    double m_idleThrottle = 0; // governor's extra throttle (telemetry)
+    double m_idleRpmTarget = 850;
 
     GasState m_plenum;
     GasState m_atm;

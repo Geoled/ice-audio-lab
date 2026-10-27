@@ -103,6 +103,7 @@ bool App::init(const std::string &engineJson) {
     m_synth.initialize(sp, 2);
     m_synth.setSimRate(m_simFreq);
     m_synth.setSampleRate(m_cfg.audio.sample_rate_hz);
+    m_synth.setEngineContext(0, 0, (int)m_cfg.cylinders.size());
 
     // ---------------- audio device ----------------
     ma_device *dev = new ma_device();
@@ -119,6 +120,7 @@ bool App::init(const std::string &engineJson) {
     ma_device_start(dev);
     m_device = dev;
 
+    if (m_engine) m_engine->setIdleControl(true);
     m_lastStepTime = std::chrono::steady_clock::now();
     ShowWindow(m_hwnd, SW_SHOWDEFAULT);
     UpdateWindow(m_hwnd);
@@ -278,6 +280,10 @@ void App::simulateFrame(double dt) {
         m_engine->step(dtSim);
         m_engine->computeAudioTap(taps, 2);
         m_synth.writeTaps(taps, 2, dtSim);
+        m_synth.setEngineContext(
+            m_engine->telemetry().rpm,
+            m_engine->inductionNoise(),
+            (int)m_cfg.cylinders.size());
     }
     m_stepsThisFrame = n;
 

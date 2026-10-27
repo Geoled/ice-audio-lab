@@ -1,7 +1,8 @@
-// audio/synth.h — synthesis pipeline: engine taps -> 48 kHz output
+// audio/synth.h — synthesis pipeline: exhaust pulses + intake noise + AGC
 #pragma once
 #include "ring_buffer.h"
 #include "../core/engine.h"
+#include <atomic>
 
 namespace ice {
 
@@ -25,6 +26,13 @@ public:
     void setSampleRate(double sr) {
         m_p.sample_rate = sr;
         m_peakDecay = std::pow(0.3679, 1.0 / (0.5 * std::max(sr, 8000.0)));
+    }
+
+    // sim thread: engine context for the noise layers (lock-free)
+    void setEngineContext(double rpm, double induction01, int cylinderCount) {
+        m_rpm.store(rpm, std::memory_order_relaxed);
+        m_induction.store(std::clamp(induction01, 0.0, 1.0), std::memory_order_relaxed);
+        m_cylCount = std::max(1, cylinderCount);
     }
 
     // simulation thread: pushes tap samples at sim rate (nTaps per step)
@@ -62,6 +70,18 @@ private:
     double m_agcGain = 1.0;
     double m_peakDecay = 0.99995;
     double m_simRateEstimate = 18000.0;
+
+    // engine context (atomics: sim thread writes, audio thread reads)
+    std::atomic<double> m_rpm{0};
+    std::atomic<double> m_induction{0};
+    int m_cylCount = 4;
+
+    // intake-noise layer state
+    double m_noiseLp = 0;
+    double m_noiseState = 0;
+    double m_firingPhase = 0;
+    double m_fireLp = 0;
+
     uint32_t m_rng = 88172645;
     int m_wavePos = 0;
 };
