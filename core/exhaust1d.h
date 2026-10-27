@@ -38,7 +38,8 @@ public:
     };
 
     void initialize(const Config &cfg);
-    void step(double dt, const double *portPressure, const double *portVel, int nPorts);
+    void step(double dt, const double *portPressure, const double *portVel, int nPorts,
+              const double *portLift = nullptr);
 
     // radiation pressure signal at the tail end (audio tap)
     double tailSignal() const { return m_tailSignal; }
@@ -54,7 +55,8 @@ public:
 
 private:
     void advectSegment(PipeSegment &seg, double dt);
-    void injectPorts(const double *portPressure, const double *portVel, int nPorts);
+    void injectPorts(const double *portPressure, const double *portVel, int nPorts,
+                     const double *portLift);
     void boundaryEnds();
 
     Config m_cfg;

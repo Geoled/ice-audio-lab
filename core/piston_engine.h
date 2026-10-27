@@ -44,8 +44,13 @@ public:
     Exhaust1D &exhaust() { return m_exhaust; }
     bool nanDetected() const { return m_nanDetected; }
 
+    // spark counters per cylinder (debug/firing-evenness checks)
+    const int *sparkCounts() const { return m_sparkCount; }
+    int cylinderCount() const { return (int)m_cyl.size(); }
+
     // scratch buffer for port pressures (avoids allocation in step)
     std::vector<double> m_portPressure;
+    std::vector<double> m_portLift;
 
 private:
     double pistonPos(int cyl) const;      // 0 at TDC .. 1 full
@@ -75,10 +80,12 @@ private:
     double m_cycleWork = 0;
     double m_cycleAngleStart = 0;
     double m_torqueSmooth = 0;
-    double m_lastFire[64] = {-1};  // spark arm state per cylinder (-1 armed, +1 fired)
+    double m_lastFire[64];        // spark arm state per cylinder (-1 armed, +1 fired)
+    int m_firingSlot[64] = {0};    // per-cylinder slot in the 720-deg firing order
 
     uint32_t m_rng = 123456789u;
     bool m_nanDetected = false;
+    int m_sparkCount[64] = {0};   // per-cylinder spark counter (firing balance)
 };
 
 } // namespace ice

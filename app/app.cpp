@@ -102,6 +102,7 @@ bool App::init(const std::string &engineJson) {
     sp.volume = 1.0;
     m_synth.initialize(sp, 2);
     m_synth.setSimRate(m_simFreq);
+    m_synth.setSampleRate(m_cfg.audio.sample_rate_hz);
 
     // ---------------- audio device ----------------
     ma_device *dev = new ma_device();

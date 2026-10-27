@@ -21,6 +21,12 @@ public:
     double volume() const { return m_p.volume; }
     double jitter() const { return m_p.jitter; }
 
+    // AGC peak decay: set so the peak tracker falls to ~37% in ~0.5 s
+    void setSampleRate(double sr) {
+        m_p.sample_rate = sr;
+        m_peakDecay = std::pow(0.3679, 1.0 / (0.5 * std::max(sr, 8000.0)));
+    }
+
     // simulation thread: pushes tap samples at sim rate (nTaps per step)
     void writeTaps(const double *taps, int nTaps, double sim_dt);
 
@@ -54,6 +60,7 @@ private:
     double m_rateErr = 0;
     double m_peak = 0;
     double m_agcGain = 1.0;
+    double m_peakDecay = 0.99995;
     double m_simRateEstimate = 18000.0;
     uint32_t m_rng = 88172645;
     int m_wavePos = 0;

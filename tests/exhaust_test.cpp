@@ -21,10 +21,11 @@ int main() {
     double ports[4] = {P_ATM, P_ATM, P_ATM, P_ATM};
 
     // inject a strong 3 kPa pulse into port 0 for 200 steps (~11 ms)
+    double lifts[4] = {1, 1, 1, 1};
     for (int i = 0; i < 4000; ++i) {
         ports[0] = (i < 200) ? P_ATM + 3000.0 : P_ATM;
         ports[1] = P_ATM; ports[2] = P_ATM; ports[3] = P_ATM;
-        ex.step(dt, ports, nullptr, 4);
+        ex.step(dt, ports, nullptr, 4, lifts);
         if (i % 100 == 0 && i < 1200) {
             const auto &p0 = ex.primarySeg(0);
             printf("i=%5d  nodes:", i);
@@ -41,7 +42,7 @@ int main() {
     double maxTail = 0;
     for (int i = 0; i < 8000; ++i) {
         ports[0] = P_ATM + 50000.0;
-        ex.step(dt, ports, nullptr, 4);
+        ex.step(dt, ports, nullptr, 4, lifts);
         if (std::abs(ex.tailSignal()) > maxTail) maxTail = std::abs(ex.tailSignal());
         if (i % 800 == 0) {
             printf("i=%5d  col=%9.2f  tail=%9.4f\n", i, ex.collectorSignal(), ex.tailSignal());

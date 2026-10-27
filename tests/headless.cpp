@@ -3,6 +3,7 @@
 #include "../core/config.h"
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 
 using namespace ice;
 
@@ -26,6 +27,8 @@ int main(int argc, char **argv) {
     double taps[2] = {0, 0};
     double maxTap = 0, sumTap = 0;
     int tapCount = 0;
+    // log spark-vs-cylCycle for one full early cycle to debug phasing
+    bool traced = false;
 
     // 40 seconds: 6s starter-only, then throttle, starter off at 15s
     bool nanSeen = false;
@@ -44,6 +47,7 @@ int main(int argc, char **argv) {
             }
             if (eng.nanDetected()) nanSeen = true;
         }
+        (void)traced;
         const auto &c0 = eng.cylinders()[0];
         printf("t=%2ds  rpm=%7.1f  torque_avg=%7.2f Nm  map=%6.1f kPa  tailTap=%9.4f  P0=%8.1fPa lit0=%d fuel0=%.5f\n",
                sec, eng.rpm(), eng.telemetry().torque_avg_nm,
@@ -55,7 +59,19 @@ int main(int argc, char **argv) {
     printf("\npeak |tail| = %.4f, mean |tail| = %.6f over %d samples\n",
            maxTap, tapCount ? sumTap / tapCount : 0.0, tapCount);
 
-    const bool ok = eng.rpm() > 500 && maxTap > 1e-6 && !nanSeen;
+    // firing balance: each cylinder must have fired a similar number of times
+    printf("spark counts:");
+    for (int i = 0; i < eng.cylinderCount(); ++i) printf(" c%d=%d", i + 1, eng.sparkCounts()[i]);
+    printf("\n");
+    int mn = eng.sparkCounts()[0], mx = eng.sparkCounts()[0];
+    for (int i = 1; i < eng.cylinderCount(); ++i) {
+        mn = std::min(mn, eng.sparkCounts()[i]);
+        mx = std::max(mx, eng.sparkCounts()[i]);
+    }
+    const bool balanced = (mx - mn) <= std::max(1, mx / 20);
+    printf(balanced ? "firing balance OK\n" : "firing IMBALANCE (check firing_order)\n");
+
+    const bool ok = eng.rpm() > 500 && maxTap > 1e-6 && !nanSeen && balanced;
     printf(ok ? "SMOKE TEST PASS\n" : "SMOKE TEST FAIL (engine dead or silent)\n");
     if (nanSeen) printf("NaN was detected and sanitized during the run!\n");
     return ok ? 0 : 2;

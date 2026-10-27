@@ -76,16 +76,17 @@ void Synth::renderBlock(float *out, int frames) {
             mono += (dc * jit * air + deriv) * tapGain;
         }
 
-        // AGC (attack/release asymmetric) with a noise floor so the engine
-        // is audible from the very first firing pulse
+        // AGC (attack/release asymmetric): fast pull-down on transients,
+        // moderately fast recovery so idle is audible too.
+        // Peak follower decays over ~0.5 s.
         const double target = 0.25;
         const double mag = std::abs(mono);
-        m_peak = std::max(m_peak * 0.9995, mag);
+        m_peak = std::max(m_peak * m_peakDecay, mag);
         double desired = 3.0;
         if (m_peak > 1e-9) {
             desired = std::min(3.0, target / m_peak);
         }
-        const double k = (desired < m_agcGain) ? 0.05 : 0.002; // fast down, slow up
+        const double k = (desired < m_agcGain) ? 0.02 : 0.0005;
         m_agcGain += k * (desired - m_agcGain);
         m_agcGain = std::clamp(m_agcGain, 1e-4, 4.0);
         double s = mono * m_agcGain * m_p.volume;

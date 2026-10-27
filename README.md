@@ -59,11 +59,15 @@ build\Release\ice-headless.exe assets\engines\baseline_i4.json
 ## Структура
 
 ```
-core/     физика: gas_system (0D), piston_engine (4T), combustion (flame event),
-          exhaust1d (Lax-Wendroff 1D + радиация открытого конца), config (JSON)
-audio/    synth: SPSC ring (sim->audio), jitter/DC/derivative/AGC, 48 kHz
-app/      Win32+OpenGL3+Dear ImGui оболочка, ImPlot графики
+core/     физика: gas_system (0D, NaN-safe), piston_engine (4T, firing-order slots),
+          combustion (flame event), exhaust1d (characteristics 1D + valve-gated ports),
+          config (JSON, firing_order -> per-cylinder 720-deg slots)
+audio/    synth: SPSC ring, fixed-ratio resampling w/ interpolation, jitter/DC/derivative,
+          AGC (fast attack, ~0.5 s peak decay), 48 kHz
+app/      Win32+OpenGL3+Dear ImGui, ImPlot, FFT spectrum, per-cyl debug, F5 reload
 assets/engines/  JSON-конфиги (baseline_i4 + примеры S2-совместимые)
+tests/    ice-headless (40 s прогон + NaN/firing-balance gates),
+          ice-firststep (пошаговая трассировка), ice-exhaust (1D-сеть напрямую)
 ```
 
 ## Формат двигателя (S0-подмножество v1)

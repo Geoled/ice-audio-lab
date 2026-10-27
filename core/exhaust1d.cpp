@@ -50,27 +50,32 @@ int Exhaust1D::nodeCount() const {
     return n;
 }
 
-void Exhaust1D::step(double dt, const double *portPressure, const double *portVel, int nPorts) {
-    injectPorts(portPressure, portVel, nPorts);
+void Exhaust1D::step(double dt, const double *portPressure, const double *portVel, int nPorts,
+                     const double *portLift) {
+    injectPorts(portPressure, portVel, nPorts, portLift);
     for (auto &seg : m_primary) advectSegment(seg, dt);
     advectSegment(m_tail, dt);
     boundaryEnds();
 }
 
-void Exhaust1D::injectPorts(const double *portPressure, const double *portVel, int nPorts) {
+void Exhaust1D::injectPorts(const double *portPressure, const double *portVel, int nPorts,
+                             const double *portLift) {
     (void)portVel;
-    // inject the cylinder port pressure at the head of each primary;
-    // the resulting wave propagates down the pipe at the local sound speed.
+    // inject the cylinder port pressure at the head of each primary while the
+    // exhaust valve is open; a closed valve decouples the pipe (weak leak only)
     for (int i = 0; i < (int)m_primary.size() && i < nPorts; ++i) {
         if (m_primary[i].nodes.empty()) continue;
         auto &first = m_primary[i].nodes.front();
-        // strong coupling while the valve is open (portPressure == cylinder P),
-        // gentle coupling otherwise (ports see ambient)
-        first.p += 0.9 * (portPressure[i] - first.p);
-        // blowdown gust velocity from the pressure jump
-        const double dp = portPressure[i] - first.p;
-        if (dp > 200.0) {
-            first.u = std::clamp(first.u + dp * 2e-5, -200.0, 200.0);
+        const double lift = portLift ? std::clamp(portLift[i], 0.0, 1.0) : 1.0;
+        // coupling strength follows valve lift; closed valve -> tiny leak
+        const double relax = 0.05 + 0.85 * lift;
+        first.p += relax * (portPressure[i] - first.p);
+        // blowdown gust velocity from the pressure jump (valve open only)
+        if (lift > 0.01) {
+            const double dp = portPressure[i] - first.p;
+            if (dp > 200.0) {
+                first.u = std::clamp(first.u + dp * 2e-5 * lift, -200.0, 200.0);
+            }
         }
     }
     // collector tap: average of primary exits

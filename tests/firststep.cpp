@@ -38,9 +38,12 @@ int main(int argc, char **argv) {
         eng.step(dt);
         if (i % 250 == 0) {
             const auto &c0 = eng.cylinders()[0];
-            printf("i=%6d  theta=%9.5f  rpm=%9.2f  P0=%10.1f  V0=%9.7f  E0=%9.4f intL=%.2f exhL=%.2f lit=%d fuel=%.5f\n",
-                   i, eng.crankAngle(), eng.rpm(), c0.gas.pressure(), c0.gas.V,
-                   c0.gas.E, c0.intake_lift, c0.exhaust_lift, (int)c0.lit, c0.gas.x_fuel);
+            const auto &c1 = eng.cylinders()[1];
+            printf("i=%6d  theta=%9.5f  rpm=%9.2f  sparks(c1..c4)=%d/%d/%d/%d  P0=%9.1f P1=%9.1f  lit=%d/%d  fuel=%.5f/%.5f\n",
+                   i, eng.crankAngle(), eng.rpm(),
+                   eng.sparkCounts()[0], eng.sparkCounts()[1], eng.sparkCounts()[2], eng.sparkCounts()[3],
+                   c0.gas.pressure(), c1.gas.pressure(),
+                   (int)c0.lit, (int)c1.lit, c0.gas.x_fuel, c1.gas.x_fuel);
         }
     }
     return 0;

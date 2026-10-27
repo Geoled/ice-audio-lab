@@ -56,7 +56,7 @@ struct IntakeConfig {
 };
 
 struct IgnitionConfig {
-    std::vector<int> firing_order;
+    std::vector<int> firing_order;   // 1-based cylinder numbers, in firing sequence
     std::vector<std::pair<double,double>> timing_curve; // rpm -> deg BTDC
     double rev_limit_rpm = 6800;
 };

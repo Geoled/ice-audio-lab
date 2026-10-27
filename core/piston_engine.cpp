@@ -62,6 +62,30 @@ PistonEngine::PistonEngine(const EngineConfig &cfg) : m_cfg(cfg) {
     m_cyl.resize(cfg.cylinders.size());
     m_wires.resize(cfg.cylinders.size());
     m_portPressure.resize(cfg.cylinders.size(), P_ATM);
+    m_portLift.assign(cfg.cylinders.size(), 0.0);
+
+    // firing slots: firing_order lists cylinder numbers (1-based) in the order
+    // they should fire; map each to an evenly spaced slot in the 4pi cycle.
+    // Unlisted cylinders get sequential leftover slots.
+    {
+        for (int i = 0; i < 64; ++i) {
+            m_lastFire[i] = -1.0;   // all plugs armed
+            m_firingSlot[i] = 0;
+        }
+        const int n = (int)cfg.cylinders.size();
+        std::vector<int> slotOf(std::min(n, 64), -1);
+        int nextSlot = 0;
+        for (int ord : cfg.ignition.firing_order) {
+            const int idx = ord - 1;
+            if (idx >= 0 && idx < n && idx < 64 && slotOf[idx] < 0) {
+                slotOf[idx] = nextSlot++;
+            }
+        }
+        for (int i = 0; i < n && i < 64; ++i) {
+            if (slotOf[i] < 0) slotOf[i] = nextSlot++;
+        }
+        for (int i = 0; i < n && i < 64; ++i) m_firingSlot[i] = slotOf[i];
+    }
 
     // plenum gas (air at atm)
     m_plenum.V = cfg.intake.plenum_L * 1e-3;
@@ -180,28 +204,49 @@ void PistonEngine::step(double dt) {
             }
         }
 
-        // ignition: fire when the plug angle arrives (per-cylinder phase)
+        // ignition: each cylinder has its own firing slot in the global 4pi
+        // engine cycle: slot k fires at (2pi - advance + k*4pi/nCyl).
+        // The spark angle is evaluated against the GLOBAL cycle position
+        // (m_theta mod 4pi), because cylinders sharing a crank journal have
+        // identical kinematic phase but must fire in different cycles.
+        // With one spark per slot per 4pi, an n-cyl 4T engine fires evenly
+        // every (4pi/nCyl) of crank rotation.
         const double advanceDeg = ignitionAdvanceDeg(rpm());
-        const double fireAngle = std::fmod(4.0 * M_PI + (2.0 * M_PI - advanceDeg * M_PI / 180.0), 4.0 * M_PI);
+        const double slotAngle = (4.0 * M_PI) * m_firingSlot[i] / std::max(nCyl, 1);
+        const double fireAngle = std::fmod(
+            4.0 * M_PI + (2.0 * M_PI - advanceDeg * M_PI / 180.0) + slotAngle,
+            4.0 * M_PI);
+        const double globalCycle = std::fmod(m_theta, 4.0 * M_PI);
         bool sparkNow = false;
         if (m_ignition && rpm() < m_cfg.ignition.rev_limit_rpm) {
             const double tol = std::max(dt * std::abs(m_omega), 0.05);
-            double diff = std::abs(cylCycle - fireAngle);
+            double diff = std::abs(globalCycle - fireAngle);
             diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
             if (diff < tol && m_lastFire[i] < 0.0) {   // armed: one spark per pass
                 sparkNow = true;
                 m_lastFire[i] = 1.0;
+                ++m_sparkCount[i];
             }
         }
-        // re-arm the spark plug once the cylinder moves away from the fire angle
+        // re-arm the spark plug once the cycle moves away from the fire angle
         {
-            double diff = std::abs(cylCycle - fireAngle);
+            double diff = std::abs(globalCycle - fireAngle);
             diff = std::min(diff, std::abs(diff - 4.0 * M_PI));
             if (diff > 0.5 && m_lastFire[i] > 0.0) m_lastFire[i] = -1.0;
         }
+        // gate by the cylinder's own compression stroke: fuel must be present
+        // near TDC compression of THIS cylinder (its intake valve has just
+        // closed), otherwise the slot spark lands on the wrong stroke
+        (void)cylCycle;
         if (sparkNow && !st.lit && st.gas.x_fuel > 1e-6) {
+            // the spark slot must coincide with THIS cylinder's compression
+            // TDC (cylCycle near 2pi), i.e. its piston near TDC
+            const double nearCompTdc = std::abs(cylCycle - 2.0 * M_PI);
+            const double nearCompTdc2 = std::abs(nearCompTdc - 4.0 * M_PI);
+            const double compDist = std::min(nearCompTdc, nearCompTdc2);
+            (void)compDist;
             const double afr = st.gas.x_fuel > 1e-9 ? (st.gas.x_o2 / st.gas.x_fuel) : 0;
-            if (afr > 6.0 && afr < 40.0) {
+            if (afr > 6.0 && afr < 40.0 && compDist < 1.0) {
                 st.lit = true;
                 st.flame_pos = 0;
                 m_rng = m_rng * 1664525u + 1013904223u;
@@ -266,8 +311,9 @@ void PistonEngine::step(double dt) {
             ? st.gas.pressure()
             : P_ATM;
         m_portPressure[i] = ported;
+        m_portLift[i] = lift;
     }
-    m_exhaust.step(dt, m_portPressure.data(), nullptr, nCyl);
+    m_exhaust.step(dt, m_portPressure.data(), nullptr, nCyl, m_portLift.data());
 
     // ---- plenum fill (throttle) ----
     {
