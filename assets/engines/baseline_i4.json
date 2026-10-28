@@ -5,7 +5,7 @@
   "fuel": { "type": "gasoline", "molecular_afr": 14.7, "energy_density_j_per_kg": 44e6 },
 
   "crankshafts": [{
-    "id": "c0", "throw_m": 0.043, "inertia_kgm2": 0.12, "friction_nm": 9,
+    "id": "c0", "throw_m": 0.043, "inertia_kgm2": 0.35, "friction_nm": 9,
     "journals": [ { "angle_deg": 0 }, { "angle_deg": 180 }, { "angle_deg": 180 }, { "angle_deg": 0 } ]
   }],
 

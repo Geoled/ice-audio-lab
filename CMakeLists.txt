@@ -153,3 +153,15 @@ add_executable(ice-idleaudio tests/idle_audio.cpp)
 target_link_libraries(ice-idleaudio PRIVATE ice_audio)
 target_compile_definitions(ice-idleaudio PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 
+add_executable(ice-releasetrace tests/release_trace.cpp)
+target_link_libraries(ice-releasetrace PRIVATE ice_core)
+target_compile_definitions(ice-releasetrace PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-burntrace tests/burn_trace.cpp)
+target_link_libraries(ice-burntrace PRIVATE ice_core)
+target_compile_definitions(ice-burntrace PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+
+add_executable(ice-combustunit tests/combust_unit.cpp)
+target_link_libraries(ice-combustunit PRIVATE ice_core)
+target_compile_definitions(ice-combustunit PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+

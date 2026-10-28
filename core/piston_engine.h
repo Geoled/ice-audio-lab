@@ -78,6 +78,8 @@ private:
     bool m_idleControl = true; // idle governor on by default
     double m_idleThrottle = 0; // governor's extra throttle (telemetry)
     double m_idleRpmTarget = 850;
+    double m_autoCrank = 0;   // remaining auto-starter assist seconds
+    double m_prevIdleRpm = 0; // for governor damping term
 
     GasState m_plenum;
     GasState m_atm;

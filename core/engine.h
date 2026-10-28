@@ -52,7 +52,7 @@ struct CrankConfig {
 struct IntakeConfig {
     double plenum_L = 3.5;
     double throttle_bore_m = 0.065;
-    double idle_flow_k = 0.8;    // idle bypass conductance (mol/s at ref)
+    double idle_flow_k = 1.6;    // idle bypass conductance (mol/s at ref)
 };
 
 struct IgnitionConfig {

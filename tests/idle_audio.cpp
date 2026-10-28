@@ -7,6 +7,7 @@
 #include "../audio/synth.h"
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 using namespace ice;
@@ -69,10 +70,19 @@ int main(int argc, char **argv) {
 
     // start: crank + settle to idle
     runPhase(6.0, 0.0, "crank+idle");
-    // WOT burst
-    runPhase(5.0, 1.0, "WOT");
-    // release the gas — the critical phase
-    const double gapMin = runPhase(8.0, 0.0, "release (decel+idle)");
+    // stress: repeated WOT -> release cycles like a user blipping the gas
+    double worstGap = 1.0;
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        char label[64];
+        snprintf(label, sizeof(label), "WOT#%d", cycle + 1);
+        runPhase(3.0, 1.0, label);
+        snprintf(label, sizeof(label), "release#%d", cycle + 1);
+        double mn = runPhase(6.0, 0.0, label);
+        worstGap = std::fmin(worstGap, mn);
+        printf("        after cycle %d: rpm=%.0f idleThr=%.3f\n",
+               cycle + 1, eng.rpm(), eng.telemetry().idleThrottle);
+    }
+    const double gapMin = worstGap;
     // steady idle again
     const double idleMin = runPhase(4.0, 0.0, "steady idle");
 

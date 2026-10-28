@@ -159,28 +159,6 @@ double PistonEngine::ignitionAdvanceDeg(double rpm) const {
 void PistonEngine::step(double dt) {
     const int nCyl = (int)m_cyl.size();
 
-    // idle governor: keeps the engine at ~idle rpm when the user is off the
-    // gas. The idle bypass is a real air path sized to carry idle airflow;
-    // the governor trims its opening (I term) with rate limiting + deadband.
-    if (m_idleControl && m_ignition) {
-        if (rpm() > 100.0) {
-            const double err = (m_idleRpmTarget - rpm()) / m_idleRpmTarget;
-            const double errEff = (std::abs(err) < 0.10) ? 0.0 : (err - 0.10 * (err > 0 ? 1 : -1));
-            const double rate = 0.6;
-            const double dInt = std::clamp(errEff * 0.8, -rate, rate) * dt;
-            m_idleThrottle = std::clamp(m_idleThrottle + dInt, 0.0, 1.0);
-        } else {
-            // below 100 rpm while ignition is on: crank-fire assist, open up
-            m_idleThrottle = std::clamp(m_idleThrottle + 1.5 * dt, 0.0, 1.0);
-        }
-        // user on the gas -> governor releases quickly
-        if (m_throttle > 0.1) m_idleThrottle *= (1.0 - 4.0 * dt);
-    } else {
-        m_idleThrottle *= (1.0 - 3.0 * dt);
-    }
-    const double idleAir = m_idleThrottle;
-    const double effThrottle = m_throttle;  // user throttle only for the main body
-
     // starter motor torque (geared starter: high torque at low speed)
     double externalTorque = 0;
     if (m_starter) {
@@ -191,6 +169,42 @@ void PistonEngine::step(double dt) {
     // engine friction (viscous + constant)
     externalTorque -= m_cfg.crank.friction_nm * std::clamp(std::abs(m_omega) / 50.0, 0.0, 1.0);
     externalTorque -= 0.02 * m_omega; // viscous Nm/(rad/s)
+
+    // idle governor: keeps the engine at ~idle rpm when the user is off the
+    // gas. PD-control with rate limiting: reacts to rpm error AND to the
+    // rate of change (damps the pump-up/pump-down limit cycle on decel),
+    // reacts early (full band by 2x idle target).
+    if (m_idleControl && m_ignition) {
+        const double rpmNow = rpm();
+        const double dRpm = (rpmNow - m_prevIdleRpm) / std::max(dt, 1e-6);
+        m_prevIdleRpm = rpmNow;
+
+        if (rpmNow > m_idleRpmTarget * 0.4) {
+            const double err = (m_idleRpmTarget - rpmNow) / m_idleRpmTarget; // + at stall
+            // damping term: rising rpm -> close a bit earlier
+            const double dTerm = -std::clamp(dRpm / 8000.0, -1.0, 1.0) * 0.4;
+            const double want = std::clamp(err * 1.2 + dTerm, 0.0, 1.0);
+            const double rate = (want > m_idleThrottle) ? 0.7 : 0.9;  // symmetric-ish
+            m_idleThrottle += std::clamp(want - m_idleThrottle, -rate * dt, rate * dt);
+            m_idleThrottle = std::clamp(m_idleThrottle, 0.0, 1.0);
+        } else {
+            // stalled while ignition is on: brief auto-starter + full air
+            m_idleThrottle = 1.0;
+            m_autoCrank = 1.2;
+        }
+        if (m_throttle > 0.1) {
+            m_idleThrottle *= (1.0 - 4.0 * dt);
+        }
+    } else {
+        m_idleThrottle *= (1.0 - 3.0 * dt);
+    }
+    if (m_autoCrank > 0.0) {
+        m_autoCrank -= dt;
+        const double stallRpm = 300;
+        externalTorque += 450.0 * std::clamp(1.0 - rpm() / stallRpm, 0.0, 1.0);
+    }
+    const double idleAir = m_idleThrottle;
+    const double effThrottle = m_throttle;  // user throttle only for the main body
 
     // ---- per-cylinder gas exchange & combustion, apply torque ----
     double gasTorque = 0;
@@ -308,7 +322,9 @@ void PistonEngine::step(double dt) {
             const double compDist = std::min(nearCompTdc, nearCompTdc2);
             (void)compDist;
             const double afr = st.gas.x_fuel > 1e-9 ? (st.gas.x_o2 / st.gas.x_fuel) : 0;
-            if (afr > 6.0 && afr < 40.0 && compDist < 1.0) {
+            // wide lambda window: very lean mixtures still light off (weak
+            // cycles) instead of refusing to fire forever after a decel
+            if (afr > 4.0 && afr < 120.0 && compDist < 1.0) {
                 st.lit = true;
                 st.flame_pos = 0;
                 m_rng = m_rng * 1664525u + 1013904223u;
@@ -384,17 +400,15 @@ void PistonEngine::step(double dt) {
         const double idleK = m_cfg.intake.idle_flow_k * idleAir;
         const double kThrottle = throttleArea * 3.0;
         const double k = kThrottle + idleK;
-        const double dn = flowMoles(m_atm, m_plenum, k, dt);
-        // port injection: fuel vapor proportional to charge (stoich ~60:1 molar)
-        if (dn > 0) {
-            const double fuelMol = dn / 60.0;
-            const double nNew = m_plenum.n; // flowMoles already added air
-            m_plenum.x_fuel = (m_plenum.x_fuel * nNew + fuelMol) / std::max(nNew, 1e-9);
-            m_plenum.x_fuel = std::min(m_plenum.x_fuel, 0.04);
-        }
+        // === plenum pressure control: the throttle must be able to hold the
+        // plenum near atmospheric at WOT (k big enough) and choke it near
+        // MAP~30 kPa at idle bypass fully open. Calibrate k against the
+        // plenum drain rate of a 4-cyl 2L engine at 3000 rpm: ~50 mol/s.
+        const double kFuel = 0.0;  // fuel is dosed at the ports (doValves), not here
+        const double dn = flowMoles(m_atm, m_plenum, k + kFuel, dt);
+        (void)dn;
     }
-    // burn off stale fuel in plenum slowly when no flow (prevents infinite build-up)
-    m_plenum.x_fuel *= (1.0 - 0.02 * dt);
+    // no plenum fuel decay needed: fuel is dosed at the ports
 
     // ---- telemetry ----
     m_tel.rpm = rpm();
@@ -419,12 +433,22 @@ void PistonEngine::doValves(int cyl, double dt) {
     auto &cy = m_cfg.cylinders[cyl];
     auto &st = m_cyl[cyl];
 
-    // intake: plenum -> cylinder, limited by lift and runner
+    // intake: plenum -> cylinder, limited by lift and runner.
+    // Port injection: fuel is dosed DIRECTLY into the cylinder proportional
+    // to the air charge drawn this step (keeps the mixture near stoich
+    // regardless of plenum state; the single fuel path — no double dosing).
     if (st.intake_lift > 0.01) {
+        const double nBefore = st.gas.n;
         const double k = cy.intake_flow_k * st.intake_lift;
-        double dn = flowMoles(m_plenum, st.gas, k, dt);
-        // fuel comes with the charge
-        (void)dn;
+        flowMoles(m_plenum, st.gas, k, dt);
+        const double airDrawn = std::max(0.0, st.gas.n - nBefore);
+        if (airDrawn > 0) {
+            // stoich: air:fuel molar = 12.5/0.21 ≈ 59.5; lambda 0.95
+            const double fuelMol = airDrawn / 59.5 * 1.05;
+            st.gas.x_fuel = (st.gas.x_fuel * st.gas.n + fuelMol)
+                          / std::max(st.gas.n + fuelMol, 1e-12);
+            st.gas.sanitize();
+        }
     }
 
     // exhaust: cylinder -> virtual collector volume held near atmospheric

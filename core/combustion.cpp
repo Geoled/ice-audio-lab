@@ -3,6 +3,10 @@
 #include <cmath>
 #include <algorithm>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace ice {
 
 double combustStep(GasState &gas, double &flamePos, double &eff,
@@ -13,9 +17,14 @@ double combustStep(GasState &gas, double &flamePos, double &eff,
     const double T = gas.temperature();
     const double P = gas.pressure();
 
-    // turbulence factor from rpm (mean piston speed proxy)
-    const double turb = 1.0 + rpm / 3000.0;
-    double sL = laminarFlameSpeed(T, P) * turb;
+    // turbulence factor: real SI engines complete the burn within ~40-60 deg
+    // of crank at ANY speed, which needs turbulent flame speeds of ~8-12x
+    // laminar (the flame wrinkle factor grows with engine speed).
+    const double turb = 8.0 + std::min(rpm, 7000.0) / 2000.0;
+    // Metghalchi-Keck expects UNBURNED gas temperature; clamp the correlation
+    // input to the physically sensible unburned range.
+    const double Teff = std::clamp(T, 500.0, 1100.0);
+    double sL = laminarFlameSpeed(Teff, P) * turb;
     sL *= (0.7 + 0.3 * rng01);  // cycle variability
 
     // flame front sweeps the characteristic chamber length
@@ -38,8 +47,10 @@ double combustStep(GasState &gas, double &flamePos, double &eff,
         return 0;
     }
 
-    // energy release: 44 MJ/kg, 0.114 kg/mol -> ~5.0 MJ/mol fuel
-    const double dE = actualBurn * 0.114 * 44e6;
+    // energy release: 44 MJ/kg, 0.114 kg/mol -> ~5.0 MJ/mol fuel.
+    // Combustion efficiency <1: incomplete burn, dissociation at high T
+    // (real NA SI converts ~90-95% of the fuel LHV into gas internal energy).
+    const double dE = actualBurn * 0.114 * 44e6 * 0.92;
 
     // composition update (molar)
     // reactants: 1 fuel + 12.5 O2 = 13.5 mol in; products: 16 mol out
@@ -52,10 +63,29 @@ double combustStep(GasState &gas, double &flamePos, double &eff,
     gas.x_o2   = std::max(0.0, gas.x_o2   - o2Needed / std::max(gas.n, 1e-12));
     gas.x_inert = std::min(1.0, gas.x_inert + nProd / std::max(gas.n, 1e-12));
 
-    // wall heat loss (T_wall in K assumed; small relaxation toward wall)
-    const double nCv = 0.5 * gas.dof * gas.n * R_GAS; // J/K
-    const double dT_loss = (T_wall - T) * 0.02 * dt * 60.0;
-    gas.E += dE + dT_loss * nCv * 0.01;
+    // *** release the heat into the gas ***
+    gas.E += dE;
+
+    // ---- wall heat loss (Woschni-style Newton model) ----
+    // Q = h*A*(Tg-Tw), applied only while the flame front is sweeping the
+    // chamber (the burn window), which is a fraction of the cycle. Total
+    // wall losses in a real SI engine: ~15% of the fuel energy.
+    {
+        const double bore = std::cbrt(gas.V) * 0.9;          // approx from V
+        const double area = M_PI * bore * bore;              // crown+head
+        const double h = 500.0;                              // W/m2K, peak
+        const double qLoss = h * area * std::max(T - T_wall, 0.0);
+        gas.E -= qLoss * dt * 0.20;                          // burn-window share
+    }
+
+    // energy ceiling: effective adiabatic flame temperature of gasoline-air
+    // with dissociation is ~2400 K; clamp the gas energy there to bound
+    // peak pressure at a realistic 60-100 bar.
+    {
+        const double Tmax = 2400.0;
+        const double Emax = 0.5 * gas.dof * gas.n * R_GAS * Tmax;
+        if (gas.E > Emax) gas.E = Emax;
+    }
     gas.sanitize();
 
     flamePos = newPos;
